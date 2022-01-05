@@ -1,0 +1,13 @@
+[package]
+name = "carpenter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-net = "1.6.1"
+async-io = "1.6.0"
+mio = { version = "0.8", features = ["net", "os-poll", "os-ext"] }
+
+[[bin]]
+name = "carpenter"
+path = "crate/main.rs"
