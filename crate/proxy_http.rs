@@ -1,6 +1,5 @@
 use std::io;
 use std::io::{Read, Write};
-// use std::collections::HashMap;
 use mio::{Interest};
 use mio::event::{Event, Source};
 use mio::net::{TcpListener, TcpStream};
@@ -28,7 +27,7 @@ impl EventHandler for HttpProxyClient {
     fn target(&mut self) -> (&mut dyn Source, Interest) {
         (&mut self.connection, Interest::READABLE | Interest::WRITABLE)
     }
-    fn handle(&mut self, evt: &Event, _event_loop: &mut EventLoop) -> bool {
+    fn handle(mut self: Box<Self>, evt: &Event, event_loop: &mut EventLoop) {
         let cnt = &mut self.connection;
         if evt.is_readable() {
             match cnt.read(&mut self.buffer_read) {
@@ -56,14 +55,16 @@ impl EventHandler for HttpProxyClient {
                 Ok(n) => {
                     self.buffer_write.splice(..n, []);
                     // if cnt.shutdown(Shutdown::Both).is_err() {
-                    return false;
+                    return;
                 }
                 Err(_) => {
                     println!("Fail to write.");
                 }
             }
         }
-        true
+        if event_loop.reregister(evt.token(), self).is_ok() {
+            println!("Fail to reregister handler.");
+        }
     }
 }
 
@@ -75,11 +76,11 @@ pub struct HttpProxyServer {
 
 
 impl EventHandler for HttpProxyServer {
-    fn handle(&mut self, _evt: &Event, event_loop: &mut EventLoop) -> bool {
+    fn handle(self: Box<Self>, evt: &Event, event_loop: &mut EventLoop) {
         match self.listener.accept() {
             Ok((sock, address)) => {
                 let client = HttpProxyClient::from_existed_source(sock);
-                match event_loop.register(client) {
+                match event_loop.register(Box::new(client)) {
                     Ok(_tok) => {
                         println!("Listening the incoming connection from {}", address);
                     }
@@ -92,7 +93,9 @@ impl EventHandler for HttpProxyServer {
                 println!("Fail to accept the incoming connection. ({:?})", e);
             }
         }
-        true
+        if event_loop.reregister(evt.token(), self).is_ok() {
+            println!("Fail to reregister handler.");
+        }
     }
     fn target(&mut self) -> (&mut dyn Source, Interest) {
         (&mut self.listener, Interest::READABLE)

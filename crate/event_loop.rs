@@ -6,7 +6,7 @@ use mio::event::{Event, Source};
 
 
 pub trait EventHandler {
-    fn handle(&mut self, event: &Event, event_loop: &mut EventLoop) -> bool;
+    fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
     fn target(&mut self) -> (&mut dyn Source, Interest);
 }
 
@@ -33,9 +33,9 @@ impl EventLoop {
         (self.token_count, Token(self.token_count))
     }
 
-    pub fn register<A: EventHandler + 'static>(&mut self, hdlr: A) -> io::Result<Token> {
+    pub fn register(&mut self, hdlr: Box<dyn EventHandler>) -> io::Result<Token> {
         let (_sid, tok) = self.get_token();
-        let mut hdlr_box = Box::new(hdlr);
+        let mut hdlr_box = hdlr; // Box::new(hdlr);
         let hdlr_mut = hdlr_box.as_mut();
         let (source, interest) = hdlr_mut.target();
         self.poll.registry().register(source, tok, interest)?;
@@ -43,8 +43,8 @@ impl EventLoop {
         Ok(tok)
     }
 
-    pub fn reregister<A: EventHandler + 'static>(&mut self, tok: Token, hdlr: A) -> io::Result<Token> {
-        let mut hdlr_box = Box::new(hdlr);
+    pub fn reregister(&mut self, tok: Token, hdlr: Box<dyn EventHandler>) -> io::Result<Token> {
+        let mut hdlr_box: Box<dyn EventHandler> = hdlr;
         let hdlr_mut = hdlr_box.as_mut();
         let (source, interest) = hdlr_mut.target();
         self.poll.registry().reregister(source, tok, interest)?;
@@ -72,12 +72,8 @@ impl EventLoop {
 
             for (evt, tok) in pending_events {
                 // println!("Event here.");
-                let mut hdlr = self.handlers.remove(&tok).unwrap();
-                if hdlr.as_mut().handle(&evt, self) == true {
-                    let (source, interest) = hdlr.as_mut().target();
-                    self.poll.registry().reregister(source, tok, interest)?;
-                    self.handlers.insert(tok, hdlr);
-                }
+                let hdlr = self.handlers.remove(&tok).unwrap();
+                hdlr.handle(&evt, self);
             }
         }
     }

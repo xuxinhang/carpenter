@@ -36,7 +36,7 @@ fn start_proxy_server(el: &mut EventLoop) {
             let result = proxy_http::HttpProxyServer::new(addr);
             if result.is_ok() {
                 let http_server = result.unwrap();
-                match el.register(http_server) {
+                match el.register(Box::new(http_server)) {
                     Ok(_tok) => {
                         println!("Http proxy server started on {}", http_server_addr);
                     }
