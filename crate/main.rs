@@ -4,9 +4,6 @@ pub mod http_header_parser;
 
 use event_loop::EventLoop;
 // use http_header_parser::parse_http_header;
-// use mio::Poll;
-// use std::io;
-// use std::net::SocketAddr;
 
 
 fn main() {
@@ -37,7 +34,7 @@ fn start_proxy_server(el: &mut EventLoop) {
             if result.is_ok() {
                 let http_server = result.unwrap();
                 match el.register(Box::new(http_server)) {
-                    Ok(_tok) => {
+                    Ok(_) => {
                         println!("Http proxy server started on {}", http_server_addr);
                     }
                     Err(e) => {
