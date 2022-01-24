@@ -8,6 +8,7 @@ use mio::event::{Event, Source};
 pub trait EventHandler {
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
     fn target(&mut self) -> (&mut dyn Source, Token, Interest);
+    fn set_token_id(&mut self, tid: usize);
 }
 
 
@@ -31,7 +32,12 @@ impl EventLoop {
         let hdlr_mut = hdlr_box.as_mut();
         let (source, tok, interest) = hdlr_mut.target();
         self.poll.registry().register(source, tok, interest)?;
-        self.handlers.insert(tok, hdlr_box);
+        match self.handlers.insert(tok, hdlr_box) {
+            Some(_) => {
+                println!("ERROR: Handler token rewritten.");
+            }
+            None => {}
+        }
         Ok(tok)
     }
 
@@ -40,7 +46,12 @@ impl EventLoop {
         let hdlr_mut = hdlr_box.as_mut();
         let (source, tok, interest) = hdlr_mut.target();
         self.poll.registry().reregister(source, tok, interest)?;
-        self.handlers.insert(tok, hdlr_box);
+        match self.handlers.insert(tok, hdlr_box) {
+            Some(_) => {
+                println!("ERROR: Handler token rewritten.");
+            }
+            None => {}
+        }
         Ok(tok)
     }
 
