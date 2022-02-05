@@ -113,47 +113,23 @@ impl TunnelSniomitTransformer {
                 (crt_file_name, key_file_name)
             }
             ServerName::Addr6(_) => {
-                panic!("Not implemented.");
+                panic!("Not implemented."); // TODO
             }
             ServerName::Domain(domain) => {
-                let domain_parts: Vec<&str> = domain.rsplit('.').take(2).collect();
-                let domain_suffix = match domain_parts.len() {
-                    0 => String::from(""),
-                    1 => String::from(domain_parts[0]),
-                    _ => format!("{}.{}", domain_parts[1], domain_parts[0]),
-                };
-                println!("Creating TLS certificate ({})...", domain_suffix);
+                let domain_name = domain;
+                let crt_file_name = format!("tls_certs/tls_domain__{}__crt.crt", domain_name);
+                let csr_file_name = format!("tls_certs/tls_domain__{}__csr.pem", domain_name);
+                let key_file_name = String::from("certs/tls_default_key.pem");
 
-                let crt_file_name = format!("tls_certs/tls_domain__{}__crt.crt", domain_suffix);
-                let csr_file_name = format!("tls_certs/tls_domain__{}__csr.pem", domain_suffix);
-                let key_file_name = format!("tls_certs/tls_domain__{}__key.pem", domain_suffix);
-                let cfg_file_name = format!("tls_certs/tls_domain__{}__cfg.txt", domain_suffix);
                 if !std::path::Path::new(&crt_file_name).exists() {
-                    let mut content = cfg_content.clone();
-                    content.push_str(&format!("CN = {}\n", domain_suffix));
-                    content.push_str("\n");
-                    content.push_str("[reqext]\n");
-                    content.push_str(&format!("subjectAltName = DNS.1:{},DNS.2:*.{}", domain_suffix, domain_suffix));
-                    content.push_str("\n");
-                    // content.push_str("subjectAltName = DNS.1:*.zhihu.com,DNS.2:sina.cn");
-
-                    let mut config_file = std::fs::File::create(&cfg_file_name)?;
-                    config_file.write(content.as_bytes())?;
-
-                    // println!("AAAA {}", &global_configuration.openssl_path);
-
+                    println!("Creating TLS certificate ({})...", domain_name);
                     std::process::Command::new(&global_configuration.openssl_path)
                         .args([
-                            "req",
-                            "-newkey", "rsa:2048",
-                            "-nodes",
-                            "-keyout", &key_file_name,
+                            "req", "-new", "-key", &key_file_name,
                             "-out", &csr_file_name,
-                            "-config", &cfg_file_name,
+                            "-subj", &format!("//X=1/CN={}", domain_name),
                         ])
                         .output()?;
-                    // println!("AAAB {:?}", &opp);
-
                     std::process::Command::new(&global_configuration.openssl_path)
                         .args([
                             "x509", "-req",
@@ -162,11 +138,9 @@ impl TunnelSniomitTransformer {
                             "-CAkey",  "certs/root_key.pem",
                             "-out", &crt_file_name,
                             "-CAcreateserial",
-                            "-extfile", &cfg_file_name,
-                            "-extensions", "reqext",
                         ])
                         .output()?;
-                    // println!("AAAC {:?}", &op);
+                    std::fs::remove_file(csr_file_name)?;
                 }
                 (crt_file_name, key_file_name)
             }
