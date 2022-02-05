@@ -8,9 +8,7 @@ use mio::event::{Event, Source};
 pub trait EventHandler {
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
     fn target(&mut self) -> (&mut dyn Source, Token, Interest);
-    fn set_token_id(&mut self, tid: usize);
 }
-
 
 pub struct EventLoop {
     poll: Poll,

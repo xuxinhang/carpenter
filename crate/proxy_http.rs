@@ -8,6 +8,8 @@ use mio::net::{TcpListener, TcpStream};
 use std::net::{SocketAddr};
 use crate::event_loop::{EventHandler, EventLoop};
 use crate::http_header_parser::parse_http_header;
+use crate::transformer::{TunnelDirectTransformer, TunnelTransformer, TunnelSniomitTransformer};
+use crate::configuration::GlobalConfiguration;
 
 
 struct IncrementalCounter {
@@ -26,81 +28,23 @@ impl IncrementalCounter {
 }
 
 
-struct TunnelPacketBuffer {
-    buf: Vec<Vec<u8>>,
-}
-
-impl TunnelPacketBuffer {
-    fn new() -> Self {
-        Self { buf: Vec::new() }
-    }
-
-    fn push_bytes(&mut self, bytes: &[u8]) -> usize {
-        let mut accu_size = 0;
-        if self.buf.len() <= 64 {
-            let b = bytes.to_vec();
-            let read_size = b.len();
-            accu_size += read_size;
-            self.buf.push(b);
-        }
-        accu_size
-    }
-
-    fn read_from(&mut self, sock: &mut impl Read) -> io::Result<Option<usize>> {
-        let mut accu_size = 0;
-        while self.buf.len() <= 64 {
-            let mut b = vec![0; 4096];
-            let read_size = sock.read(&mut b)?;
-            accu_size += read_size;
-            let short_packet = read_size < 4096;
-            if short_packet {
-                b.truncate(read_size);
-            }
-            self.buf.push(b);
-            if short_packet {
-                break;
-            }
-            break;
-        }
-        Ok(Some(accu_size))
-    }
-
-    fn write_into(&mut self, sock: &mut impl Write) -> io::Result<Option<usize>> {
-        if self.buf.is_empty() {
-            return Ok(None);
-        }
-        let mut accu_size = 0;
-        while !self.buf.is_empty() {
-            let b = self.buf.remove(0);
-            let write_size = sock.write(&b)?;
-            accu_size += write_size;
-            break;
-        }
-        Ok(Some(accu_size))
-    }
-}
-
-
 
 struct HttpProxyRemote {
     connection: TcpStream,
     token: Token,
-    tunnel_remote: Rc<RefCell<TunnelPacketBuffer>>,
-    tunnel_client: Rc<RefCell<TunnelPacketBuffer>>,
+    transformer: Rc<RefCell<TunnelSniomitTransformer>>,
 }
 
 impl HttpProxyRemote {
     fn from_existed_connection(
         token_id: usize,
         remote_cnt: TcpStream,
-        tunnel_remote: Rc<RefCell<TunnelPacketBuffer>>,
-        tunnel_client: Rc<RefCell<TunnelPacketBuffer>>,
+        transformer: Rc<RefCell<TunnelSniomitTransformer>>,
     ) -> Self {
         Self {
             connection: remote_cnt,
             token: Token(token_id),
-            tunnel_remote,
-            tunnel_client,
+            transformer,
         }
     }
 }
@@ -110,16 +54,13 @@ impl EventHandler for HttpProxyRemote {
         (&mut self.connection, self.token, Interest::WRITABLE | Interest::READABLE)
     }
 
-    fn set_token_id(&mut self, tid: usize) {
-        self.token = Token(tid);
-    }
-
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
+        // println!("HttpProxyRemote handler");
         if event.is_writable() {
-            match (self.tunnel_remote.borrow_mut()).write_into(&mut self.connection) {
+            match (self.transformer.borrow_mut()).transmit_read(&mut self.connection) {
                 Ok(Some(n)) => {
                     if n == 0 {
-                        // println!("HttpProxyRemote : write zero byte and end listening");
+                        println!("HttpProxyRemote : write zero byte and end listening");
                         return;
                     } else {
                         // println!("HttpProxyRemote : Write data into buffer : Done {} bytes.", n);
@@ -133,10 +74,10 @@ impl EventHandler for HttpProxyRemote {
             }
         }
         if event.is_readable() {
-            match (self.tunnel_client.borrow_mut()).read_from(&mut self.connection) {
+            match self.transformer.borrow_mut().receive_write(&mut self.connection) {
                 Ok(Some(n)) => {
                     if n == 0 {
-                        // println!("HttpProxyRemote : remote closed.");
+                        println!("HttpProxyRemote : remote closed.");
                         return;
                     } else {
                         // println!("HttpProxyRemote : Read into buffer : done {} bytes.", n);
@@ -160,27 +101,30 @@ impl EventHandler for HttpProxyRemote {
 
 
 enum TunnelStatus {
-    Established(Rc<RefCell<TunnelPacketBuffer>>, Rc<RefCell<TunnelPacketBuffer>>),
-    Fail,
     Waiting,
+    Handshaking(Rc<RefCell<TunnelSniomitTransformer>>),
+    Transfering(Rc<RefCell<TunnelSniomitTransformer>>),
 }
 
 struct HttpProxyClient {
     connection: TcpStream,
     token: Token,
     buffer_read: Vec<u8>,
-    buffer_write: Vec<u8>,
+    // buffer_write: Vec<u8>,
     tunnel: TunnelStatus,
+    global_configuration: Rc<GlobalConfiguration>,
 }
 
 impl HttpProxyClient {
-    pub fn from_existed_source(token_id: usize, connection: TcpStream) -> Self {
+    pub fn from_existed_source(token_id: usize, connection: TcpStream,
+        global_configuration: Rc<GlobalConfiguration>) -> Self {
         HttpProxyClient {
             connection,
             token: Token(token_id),
             buffer_read: vec![0; 4096],
-            buffer_write: Vec::new(),
+            // buffer_write: Vec::new(),
             tunnel: TunnelStatus::Waiting,
+            global_configuration,
         }
     }
 }
@@ -190,11 +134,8 @@ impl EventHandler for HttpProxyClient {
         (&mut self.connection, self.token, Interest::READABLE | Interest::WRITABLE)
     }
 
-    fn set_token_id(&mut self, tid: usize) {
-        self.token = Token(tid);
-    }
-
     fn handle(mut self: Box<Self>, evt: &Event, event_loop: &mut EventLoop) {
+        // println!("HttpProxyClient handler");
         if evt.is_readable() {
             match self.tunnel {
                 TunnelStatus::Waiting => {
@@ -208,6 +149,7 @@ impl EventHandler for HttpProxyClient {
                     match cnt.read(&mut self.buffer_read) {
                         Ok(0) => {
                             // println!("Client: Connection closed.");
+                            return;
                         }
                         Ok(_) => {
                             let parse_result = parse_http_header(&self.buffer_read);
@@ -230,39 +172,52 @@ impl EventHandler for HttpProxyClient {
                             //     return;
                             // }
 
-                            let connect_result = std::net::TcpStream::connect(&request_headers[":path"]);
+                            let connect_host_name = request_headers[":path"].clone();
+                            let connect_server_name = request_headers[":path"].split(':').next().unwrap();
+                            let connect_result = std::net::TcpStream::connect(&connect_host_name);
                             if connect_result.is_err() {
                                 // let msg = "Fail to connect to remote host.";
                                 // notify_client_failure(msg);
                                 println!("Client : Establish tunnel {:?} : {:?}",
-                                    &request_headers[":path"], connect_result);
+                                    &connect_server_name, connect_result);
                                 return;
                             }
-                            let connection = TcpStream::from_std(connect_result.unwrap());
+                            let connect = connect_result.unwrap();
 
                             // construct the tunnel
-                            let remote_tunnel_buffer = Rc::new(RefCell::new(TunnelPacketBuffer::new()));
-                            let client_tunnel_buffer = Rc::new(RefCell::new(TunnelPacketBuffer::new()));
-                            self.tunnel = TunnelStatus::Established(
-                                Rc::clone(&remote_tunnel_buffer),
-                                Rc::clone(&client_tunnel_buffer),
-                            );
+                            let tunnel_transformer_result = match connect.peer_addr() {
+                                // io::net::SocketAddr::V4(_, 443) =>
+                                //     Rc::new(RefCell::new(TunnelSniomitTransformer::new(self.global_configuration))),
+                                // io::net::SocketAddr::V6(_, 443) =>
+                                //     Rc::new(RefCell::new(TunnelSniomitTransformer::new(self.global_configuration))),
+                                _ => TunnelSniomitTransformer::new(
+                                    Rc::clone(&self.global_configuration),
+                                    &connect_server_name,
+                                ),
+                            };
 
+                            if tunnel_transformer_result.is_err() {
+                                println!(
+                                    "Fail to create transformer",
+                                    // tunnel_transformer_result.unwrap_err().description()
+                                );
+                                return;
+                            }
+                            let tunnel_transformer = Rc::new(RefCell::new(tunnel_transformer_result.unwrap()));
+
+                            self.tunnel = TunnelStatus::Handshaking(Rc::clone(&tunnel_transformer));
                             let remote_token_id = self.token.0 | 1;
                             let remote = HttpProxyRemote::from_existed_connection(
                                 remote_token_id,
-                                connection,
-                                Rc::clone(&remote_tunnel_buffer),
-                                Rc::clone(&client_tunnel_buffer),
+                                TcpStream::from_std(connect),
+                                Rc::clone(&tunnel_transformer),
                             );
                             let register_result = event_loop.register(Box::new(remote));
                             if register_result.is_err() {
                                 println!("Remote : register : Fail");
                                 return;
                             }
-
-                            client_tunnel_buffer.borrow_mut()
-                                .push_bytes("HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes());
+                            // println!("WAHAHAH...");
                         }
                         Err(e) => {
                             println!("Client : Read : {:?}", e);
@@ -270,12 +225,13 @@ impl EventHandler for HttpProxyClient {
                         }
                     }
                 }
-                TunnelStatus::Established(ref remote_tunnel_buffer, _) => {
+                TunnelStatus::Handshaking(ref _r) => {}
+                TunnelStatus::Transfering(ref tunnel_transformer) => {
                     let connection = &mut self.connection;
-                    match remote_tunnel_buffer.borrow_mut().read_from(connection) {
+                    match tunnel_transformer.borrow_mut().transmit_write(connection) {
                         Ok(Some(n)) => {
                             if n == 0 {
-                                // println!("Client : Tunnel : closing connection (by local).");
+                                println!("Client : Tunnel : closing connection (by local).");
                                 return;
                             } else {
                                 // println!("Client : Tunnel : move {} bytes to remote buffer.", n);
@@ -288,19 +244,27 @@ impl EventHandler for HttpProxyClient {
                         }
                     }
                 }
-                _ => {}
             }
         }
 
         if evt.is_writable() {
             match self.tunnel {
                 TunnelStatus::Waiting => {}
-                TunnelStatus::Established(_, ref client_tunnel_buffer) => {
-                    let mut buf_ref = client_tunnel_buffer.borrow_mut();
-                    match buf_ref.write_into(&mut self.connection) {
+                TunnelStatus::Handshaking(ref tunnel_transformer) => {
+                    let response = "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes();
+                    // let _ = tunnel_transformer.borrow_mut().receive_write(&mut response);
+                    if self.connection.write(response).is_err() {
+                        println!("Client : Handshaking : fail to write.");
+                        return;
+                    }
+                    self.tunnel = TunnelStatus::Transfering(Rc::clone(tunnel_transformer));
+                }
+                TunnelStatus::Transfering(ref tunnel_transformer) => {
+                    let mut buf_ref = tunnel_transformer.borrow_mut();
+                    match buf_ref.receive_read(&mut self.connection) {
                         Ok(Some(n)) => {
                             if n == 0 {
-                                // println!("Client : Tunnel : closing connection");
+                                println!("Client : Tunnel : closing connection (by remote)");
                                 return;
                             } else {
                                 // println!("Client : Tunnel : sent {} bytes", n);
@@ -312,9 +276,6 @@ impl EventHandler for HttpProxyClient {
                             return;
                         }
                     }
-                }
-                TunnelStatus::Fail => {
-                    return;
                 }
             }
         }
@@ -333,6 +294,7 @@ pub struct HttpProxyServer {
     listener: TcpListener,
     token: Token,
     counter: IncrementalCounter,
+    global_configuration: Rc<GlobalConfiguration>,
 }
 
 
@@ -341,15 +303,12 @@ impl EventHandler for HttpProxyServer {
         (&mut self.listener, self.token, Interest::READABLE)
     }
 
-    fn set_token_id(&mut self, tid: usize) {
-        self.token = Token(tid);
-    }
-
     fn handle(mut self: Box<Self>, _evt: &Event, event_loop: &mut EventLoop) {
+        // println!("Http Proxy Server handler.");
         match self.listener.accept() {
             Ok((sock, _address)) => {
                 let client_token_id = self.as_mut().counter.get();
-                let client = HttpProxyClient::from_existed_source(client_token_id, sock);
+                let client = HttpProxyClient::from_existed_source(client_token_id, sock, Rc::clone(&self.global_configuration));
                 match event_loop.register(Box::new(client)) {
                     Ok(_tok) => {
                         // println!("Listening the incoming connection from {}", address);
@@ -375,7 +334,7 @@ impl EventHandler for HttpProxyServer {
 }
 
 impl HttpProxyServer {
-    pub fn new(address: SocketAddr) -> io::Result<HttpProxyServer> {
+    pub fn new(address: SocketAddr, conf: Rc<GlobalConfiguration>) -> io::Result<HttpProxyServer> {
         let listener = match TcpListener::bind(address) {
             Ok(listener) => listener,
             Err(e) => { return Err(e) },
@@ -384,6 +343,7 @@ impl HttpProxyServer {
             listener: listener,
             token: Token(17),
             counter: IncrementalCounter::new(),
+            global_configuration: conf,
         })
     }
 }

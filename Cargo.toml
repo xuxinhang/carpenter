@@ -7,6 +7,10 @@ edition = "2021"
 async-net = "1.6.1"
 async-io = "1.6.0"
 mio = { version = "0.8", features = ["net", "os-poll", "os-ext"] }
+rustls = "0.20.2"
+rustls-pemfile = "0.2.1"
+webpki-roots = "0.21.1"
+
 
 [[bin]]
 name = "carpenter"

@@ -1,1 +1,9 @@
+/Cargo.lock
 /target
+
+/certs
+/assets
+/tls_certs/*.txt
+*.pem
+*.crt
+*.csr
