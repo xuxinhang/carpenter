@@ -1,6 +1,6 @@
 use std::io;
 use std::io::{Read, Write};
-use crate::transformer::TunnelTransformer;
+use crate::transformer::{TunnelTransformer, TransferResult};
 
 
 struct TunnelPacketBuffer {
@@ -73,17 +73,37 @@ impl TunnelDirectTransformer {
 }
 
 impl TunnelTransformer for TunnelDirectTransformer {
-    fn transmit_write(&mut self, source: &mut impl Read) -> io::Result<Option<usize>> {
-        self.transmit_buffer.read_from(source)
+    fn transmit_write(&mut self, source: &mut impl Read) -> TransferResult {
+        match self.transmit_buffer.read_from(source) {
+            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(n)) => TransferResult::Data(n),
+            Ok(None) => TransferResult::Data(0),
+            Err(_) => TransferResult::Error,
+        }
     }
-    fn transmit_read(&mut self, target: &mut impl Write) -> io::Result<Option<usize>> {
-        self.transmit_buffer.write_into(target)
+    fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
+        match self.transmit_buffer.write_into(target) {
+            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(n)) => TransferResult::Data(n),
+            Ok(None) => TransferResult::Data(0),
+            Err(_) => TransferResult::Error,
+        }
     }
-    fn receive_write(&mut self, source: &mut impl Read) -> io::Result<Option<usize>> {
-        self.receive_buffer.read_from(source)
+    fn receive_write(&mut self, source: &mut impl Read) -> TransferResult {
+        match self.receive_buffer.read_from(source) {
+            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(n)) => TransferResult::Data(n),
+            Ok(None) => TransferResult::Data(0),
+            Err(_) => TransferResult::Error,
+        }
     }
-    fn receive_read(&mut self, target: &mut impl Write) -> io::Result<Option<usize>> {
-        self.receive_buffer.write_into(target)
+    fn receive_read(&mut self, target: &mut impl Write) -> TransferResult {
+        match self.receive_buffer.write_into(target) {
+            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(n)) => TransferResult::Data(n),
+            Ok(None) => TransferResult::Data(0),
+            Err(_) => TransferResult::Error,
+        }
     }
 }
 

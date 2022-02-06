@@ -2,7 +2,7 @@ use std::io;
 use std::io::{Read, Write};
 use std::sync::Arc;
 use std::rc::Rc;
-use crate::transformer::TunnelTransformer;
+use crate::transformer::{TunnelTransformer, TransferResult};
 use crate::configuration::GlobalConfiguration;
 use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig, IoState};
 
@@ -36,17 +36,17 @@ impl std::str::FromStr for ServerName {
 pub struct TunnelSniomitTransformer {
     global_configuration: Rc<GlobalConfiguration>,
     local_tls: ServerConnection,
-    local_tls_closed: bool,
-    local_tls_error: bool,
-    // local_tls_conf: Arc<ServerConfig>,
     remote_tls: ClientConnection,
-    remote_tls_closed: bool,
-    remote_tls_error: bool,
-    // remote_tls_conf: Arc<ClientConfig>,
+    transmit_plaintext_buffer: Vec<Vec<u8>>,
+    receive_plaintext_buffer: Vec<Vec<u8>>,
+    _transmit_tls_will_close: bool,
+    _receive_tls_will_close: bool,
 }
+
 
 impl TunnelSniomitTransformer {
     pub fn new(global_configuration: Rc<GlobalConfiguration>, server_str: &str) -> io::Result<Self> {
+        println!("transfer new");
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(
             webpki_roots::TLS_SERVER_ROOTS
@@ -113,7 +113,7 @@ impl TunnelSniomitTransformer {
                 (crt_file_name, key_file_name)
             }
             ServerName::Addr6(_) => {
-                panic!("Not implemented."); // TODO
+                unimplemented!();
             }
             ServerName::Domain(domain) => {
                 let domain_name = domain;
@@ -169,134 +169,321 @@ impl TunnelSniomitTransformer {
 
         Ok(Self {
             local_tls: ServerConnection::new(local_tls_conf).unwrap(),
-            local_tls_closed: false,
-            local_tls_error: false,
+            // local_tls_closed: false,
+            // local_tls_error: false,
             remote_tls: ClientConnection::new(
                 remote_tls_conf,
                 server_str.try_into().unwrap_or("example.com".try_into().unwrap()), // TODO
                 // "static.zhihu.com".try_into().unwrap(),
             ).unwrap(),
-            remote_tls_closed: false,
-            remote_tls_error: false,
+            // remote_tls_closed: false,
+            // remote_tls_error: false,
             // remote_tls_conf,
             global_configuration,
+            transmit_plaintext_buffer: Vec::new(),
+            receive_plaintext_buffer: Vec::new(),
+            _transmit_tls_will_close: false,
+            _receive_tls_will_close: false,
         })
     }
 }
 
 
 impl TunnelTransformer for TunnelSniomitTransformer {
-    fn transmit_write(&mut self, source: &mut impl Read) -> io::Result<Option<usize>> {
-        // println!("> transmit_write");
+    fn transmit_write(&mut self, source: &mut impl Read) -> TransferResult {
+        // println!("transmit_write");
         let tls = &mut self.local_tls;
-        if !tls.wants_read() {
-            return Ok(None);
-        }
-        let _tls_read_size = tls.read_tls(source)?;
-        let tls_process_result = tls.process_new_packets();
-        if tls_process_result.is_err() {
-            self.local_tls_error = true;
-            println!("local_tls_error {:?}", tls_process_result.unwrap_err());
-            return Ok(Some(0));
-        }
-        let tls_state = tls_process_result.unwrap();
-        if tls_state.peer_has_closed() {
-            self.remote_tls.send_close_notify();
-            self.local_tls_closed = true;
-        }
-        let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
-        if expected_plaintext_size > 0 {
-            let mut accu_number = 0;
-            let mut buf = vec![0u8; 4096];
-            while accu_number < expected_plaintext_size {
-                let n = tls.reader().read(&mut buf)?;
-                buf.truncate(n);
-                accu_number += n;
-                let tls = &mut self.remote_tls;
-                let _write_size = tls.writer().write(&buf)?;
+        // if !tls.wants_read() {
+        //     println!("tls wants read");
+        //     return TransferResult::Data(0);
+        // }
+
+        // we have ensured no plaintext left.
+        match tls.read_tls(source) {
+            Err(_) => {
+                self.transmit_plaintext_buffer.push(Vec::new());
+                return TransferResult::Error;
+            }
+            Ok(read_size) => {
+                match tls.process_new_packets() {
+                    Err(_) => {
+                        self.transmit_plaintext_buffer.push(Vec::new());
+                        return TransferResult::Error;
+                    }
+                    Ok(tls_state) => {
+                        let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
+                        if expected_plaintext_size != 0 {
+                            let mut current_plaintext_size = 0;
+                            let mut buf = vec![0; 4096];
+                            while current_plaintext_size < expected_plaintext_size {
+                                match tls.reader().read(&mut buf) {
+                                    Err(_) => {
+                                        self.transmit_plaintext_buffer.push(Vec::new());
+                                        return TransferResult::Error;
+                                    }
+                                    Ok(n) => {
+                                        current_plaintext_size += n;
+                                        self.transmit_plaintext_buffer.push(Vec::from(&buf[..n]));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if read_size == 0 {
+                    self.transmit_plaintext_buffer.push(Vec::new());
+                    return TransferResult::End(read_size);
+                } else {
+                    return TransferResult::Data(read_size);
+                }
             }
         }
-        if self.local_tls_closed {
-            println!("local_tls_closed");
-            return Ok(Some(0));
-        } else {
-            if expected_plaintext_size == 0 {
-                return Ok(None);
-            } else {
-                return Ok(Some(expected_plaintext_size));
-            }
-        }
+
+
+        // let tls = &mut self.local_tls;
+        // if !tls.wants_read() {
+        //     return Ok(None);
+        // }
+        // let source_read_size = tls.read_tls(source).unwrap_or(0);
+        // if source_read_size == 0 {
+        //     self.local_tls_closed = true;
+        // }
+        // let tls_process_result = tls.process_new_packets();
+        // if tls_process_result.is_err() {
+        //     self.local_tls_error = true;
+        //     println!("local_tls_error {:?}", tls_process_result.unwrap_err());
+        //     return Ok(Some(0));
+        // }
+        // let tls_state = tls_process_result.unwrap();
+        // if tls_state.peer_has_closed() {
+        //     self.remote_tls.send_close_notify();
+        //     self.local_tls_closed = true;
+        // }
+        // let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
+        // if expected_plaintext_size > 0 {
+        //     let mut accu_number = 0;
+        //     let mut buf = vec![0u8; 4096];
+        //     while accu_number < expected_plaintext_size {
+        //         let n = tls.reader().read(&mut buf)?;
+        //         buf.truncate(n);
+        //         accu_number += n;
+        //         let tls = &mut self.remote_tls;
+        //         let _write_size = tls.writer().write(&buf)?;
+        //     }
+        // }
+        // if self.local_tls_closed {
+        //     println!("local_tls_closed");
+        //     return Ok(Some(0));
+        // } else {
+        //     if expected_plaintext_size == 0 {
+        //         return Ok(None);
+        //     } else {
+        //         return Ok(Some(expected_plaintext_size));
+        //     }
+        // }
     }
 
-    fn transmit_read(&mut self, target: &mut impl Write) -> io::Result<Option<usize>> {
-        // println!("> transmit_read");
+    fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
+        // println!("transmit_read");
         let tls = &mut self.remote_tls;
-        if !tls.wants_write() {
-            if self.local_tls_closed || self.local_tls_error {
-                return Ok(Some(0));
-            } else {
-                return Ok(None);
+        let mut will_close = false;
+
+        loop {
+            let mut tls_write_size = 0;
+            if tls.wants_write() {
+                match tls.write_tls(target) {
+                    Err(_) => {
+                        return TransferResult::Error;
+                    }
+                    Ok(n) => {
+                        tls_write_size += n;
+                        return TransferResult::Data(n);
+                    }
+                }
             }
+
+            if will_close || self._transmit_tls_will_close {
+                return TransferResult::End(0);
+            } else {
+                if self.transmit_plaintext_buffer.is_empty() {
+                    return TransferResult::Data(0);
+                }
+                let mut buf = self.transmit_plaintext_buffer.remove(0);
+                match buf.len() {
+                    0 => {
+                        will_close = true;
+                        self._transmit_tls_will_close = true;
+                        tls.send_close_notify();
+                        continue;
+                    }
+                    _ => {
+                        let _ = tls.writer().write(&mut buf);
+                        continue;
+                    }
+                }
+            }
+
+            unreachable!();
         }
-        let n = tls.write_tls(target)?;
-        Ok(Some(n))
+
+        // let tls = &mut self.remote_tls;
+        // if !tls.wants_write() {
+        //     if self.local_tls_closed || self.local_tls_error {
+        //         return Ok(Some(0));
+        //     } else {
+        //         return Ok(None);
+        //     }
+        // }
+        // let n = tls.write_tls(target)?;
+        // Ok(Some(n))
     }
 
-    fn receive_write(&mut self, source: &mut impl Read) -> io::Result<Option<usize>> {
-        // println!("> receive_write");
+    fn receive_write(&mut self, source: &mut impl Read) -> TransferResult {
+        // println!("receive_write");
         let tls = &mut self.remote_tls;
-        if !tls.wants_read() {
-            return Ok(None);
-        }
-        tls.read_tls(source)?;
-        let tls_process_result = tls.process_new_packets();
-        if tls_process_result.is_err() {
-            self.remote_tls_error = true;
-            println!("remote_tls_error {:?}", tls_process_result.unwrap_err());
-            return Ok(Some(0));
-        }
-        let tls_state = tls_process_result.unwrap();
-        if tls_state.peer_has_closed() {
-            println!("receive write peer has closed");
-            self.remote_tls_closed = true;
-            self.local_tls.send_close_notify();
-        }
-        let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
-        if expected_plaintext_size > 0 {
-            let mut accu_count = 0;
-            let mut buf = vec![0u8; 4096];
-            while accu_count < expected_plaintext_size {
-                let n = tls.reader().read(&mut buf)?;
-                buf.truncate(n);
-                accu_count += n;
-                let tls = &mut self.local_tls;
-                tls.writer().write(&buf)?;
+        // if !tls.wants_read() {
+        //     return TransferResult::Data(0);
+        // }
+
+        // we have ensured no plaintext left.
+        match tls.read_tls(source) {
+            Err(_) => {
+                self.receive_plaintext_buffer.push(Vec::new());
+                return TransferResult::Error;
+            }
+            Ok(read_size) => {
+                match tls.process_new_packets() {
+                    Err(_) => {
+                        self.receive_plaintext_buffer.push(Vec::new());
+                        return TransferResult::Error;
+                    }
+                    Ok(tls_state) => {
+                        let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
+                        if expected_plaintext_size != 0 {
+                            let mut current_plaintext_size = 0;
+                            let mut buf = vec![0; 4096];
+                            while current_plaintext_size < expected_plaintext_size {
+                                match tls.reader().read(&mut buf) {
+                                    Err(_) => {
+                                        self.receive_plaintext_buffer.push(Vec::new());
+                                        return TransferResult::Error;
+                                    }
+                                    Ok(n) => {
+                                        current_plaintext_size += n;
+                                        self.receive_plaintext_buffer.push(Vec::from(&buf[..n]));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if read_size == 0 {
+                    self.receive_plaintext_buffer.push(Vec::new());
+                    return TransferResult::End(read_size);
+                } else {
+                    return TransferResult::Data(read_size);
+                }
             }
         }
-        if self.remote_tls_closed {
-            println!("remote_tls_closed");
-            return Ok(Some(0));
-        } else {
-            if expected_plaintext_size == 0 {
-                return Ok(None);
-            } else {
-                return Ok(Some(expected_plaintext_size));
-            }
-        }
+
+        // let tls = &mut self.remote_tls;
+        // if !tls.wants_read() {
+        //     return Ok(None);
+        // }
+        // let source_read_size = tls.read_tls(source).unwrap_or(0);
+        // if source_read_size == 0 {
+        //     self.remote_tls_closed = true;
+        // }
+        // let tls_process_result = tls.process_new_packets();
+        // if tls_process_result.is_err() {
+        //     self.remote_tls_error = true;
+        //     println!("remote_tls_error {:?}", tls_process_result.unwrap_err());
+        //     return Ok(Some(0));
+        // }
+        // let tls_state = tls_process_result.unwrap();
+        // if tls_state.peer_has_closed() {
+        //     println!("receive write peer has closed");
+        //     self.remote_tls_closed = true;
+        //     self.local_tls.send_close_notify();
+        // }
+        // let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
+        // if expected_plaintext_size > 0 {
+        //     let mut accu_count = 0;
+        //     let mut buf = vec![0u8; 4096];
+        //     while accu_count < expected_plaintext_size {
+        //         let n = tls.reader().read(&mut buf)?;
+        //         buf.truncate(n);
+        //         accu_count += n;
+        //         let tls = &mut self.local_tls;
+        //         tls.writer().write(&buf)?;
+        //     }
+        // }
+        // if self.remote_tls_closed {
+        //     println!("remote_tls_closed");
+        //     return Ok(Some(0));
+        // } else {
+        //     if expected_plaintext_size == 0 {
+        //         return Ok(None);
+        //     } else {
+        //         return Ok(Some(expected_plaintext_size));
+        //     }
+        // }
     }
 
-    fn receive_read(&mut self, target: &mut impl Write) -> io::Result<Option<usize>> {
+    fn receive_read(&mut self, target: &mut impl Write) -> TransferResult {
+        // println!("receive_read");
+        let tls = &mut self.local_tls;
+        let mut will_close = false;
+
+        loop {
+            let mut tls_write_size = 0;
+            if tls.wants_write() {
+                match tls.write_tls(target) {
+                    Err(_) => {
+                        return TransferResult::Error;
+                    }
+                    Ok(n) => {
+                        tls_write_size += n;
+                        return TransferResult::Data(n);
+                    }
+                }
+            }
+
+            if will_close || self._receive_tls_will_close {
+                return TransferResult::End(0);
+            } else {
+                if self.receive_plaintext_buffer.is_empty() {
+                    return TransferResult::Data(0);
+                }
+                let mut buf = self.receive_plaintext_buffer.remove(0);
+                match buf.len() {
+                    0 => {
+                        self._receive_tls_will_close = true;
+                        will_close = true;
+                        tls.send_close_notify();
+                        continue;
+                    }
+                    _ => {
+                        let _ = tls.writer().write(&mut buf);
+                        continue;
+                    }
+                }
+            }
+
+            unreachable!();
+        }
+
         // println!("> receive_read {}", self.remote_tls_closed);
-        let tls = &mut self.local_tls;
-        if !tls.wants_write() {
-            if self.remote_tls_closed || self.remote_tls_error {
-                return Ok(Some(0));
-            } else {
-                return Ok(None);
-            }
-        }
-        let n = tls.write_tls(target)?;
-        Ok(Some(n))
+        // let tls = &mut self.local_tls;
+        // if !tls.wants_write() {
+        //     if self.remote_tls_closed || self.remote_tls_error {
+        //         return Ok(Some(0));
+        //     } else {
+        //         return Ok(None);
+        //     }
+        // }
+        // let n = tls.write_tls(target)?;
+        // Ok(Some(n))
     }
 }
 
