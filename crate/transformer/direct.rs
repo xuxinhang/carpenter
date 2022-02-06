@@ -12,16 +12,16 @@ impl TunnelPacketBuffer {
         Self { buf: Vec::new() }
     }
 
-    fn push_bytes(&mut self, bytes: &[u8]) -> usize {
-        let mut accu_size = 0;
-        if self.buf.len() <= 64 {
-            let b = bytes.to_vec();
-            let read_size = b.len();
-            accu_size += read_size;
-            self.buf.push(b);
-        }
-        accu_size
-    }
+    // fn push_bytes(&mut self, bytes: &[u8]) -> usize {
+    //     let mut accu_size = 0;
+    //     if self.buf.len() <= 64 {
+    //         let b = bytes.to_vec();
+    //         let read_size = b.len();
+    //         accu_size += read_size;
+    //         self.buf.push(b);
+    //     }
+    //     accu_size
+    // }
 
     fn read_from(&mut self, sock: &mut impl Read) -> io::Result<Option<usize>> {
         let mut accu_size = 0;

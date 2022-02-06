@@ -1,5 +1,5 @@
-use std::io;
 use std::io::{Read, Write};
+
 
 pub trait TunnelTransformer {
     fn transmit_write(&mut self, source: &mut impl Read) -> TransferResult;

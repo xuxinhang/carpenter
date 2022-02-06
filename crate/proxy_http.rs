@@ -28,7 +28,6 @@ impl IncrementalCounter {
 }
 
 
-
 struct HttpProxyRemote {
     connection: TcpStream,
     token: Token,
@@ -325,9 +324,7 @@ impl EventHandler for HttpProxyServer {
             }
         }
         match event_loop.reregister(self) {
-            Ok(_) => {
-                // println!("Server Register : Ok.");
-            }
+            Ok(_) => {}
             Err(e) => {
                 println!("Server Register : Fail. {:?}", e);
             }
