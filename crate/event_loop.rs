@@ -53,6 +53,20 @@ impl EventLoop {
         Ok(tok)
     }
 
+    pub fn reregisteri(&mut self, hdlr: Box<dyn EventHandler>, interest: Interest) -> io::Result<Token> {
+        let mut hdlr_box: Box<dyn EventHandler> = hdlr;
+        let hdlr_mut = hdlr_box.as_mut();
+        let (source, tok, _) = hdlr_mut.target();
+        self.poll.registry().reregister(source, tok, interest)?;
+        match self.handlers.insert(tok, hdlr_box) {
+            Some(_) => {
+                println!("ERROR: Handler token rewritten.");
+            }
+            None => {}
+        }
+        Ok(tok)
+    }
+
     pub fn deregister(&mut self, hdlr: Box<dyn EventHandler>) -> io::Result<Box<dyn EventHandler>> {
         let mut hdlr_box = hdlr;
         let (source, tok, _interest) = hdlr_box.target();

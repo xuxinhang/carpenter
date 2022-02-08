@@ -6,6 +6,7 @@ use crate::transformer::{TunnelTransformer, TransferResult};
 use crate::configuration::GlobalConfiguration;
 use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
 
+const MAX_BUFFER_UINT_SIZE: usize = 4*1024*1024;
 
 enum ServerName {
     Addr4(std::net::Ipv4Addr),
@@ -44,7 +45,11 @@ pub struct TunnelSniomitTransformer {
 
 
 impl TunnelSniomitTransformer {
-    pub fn new(global_configuration: Rc<GlobalConfiguration>, server_str: &str) -> io::Result<Self> {
+    pub fn new(
+        global_configuration: Rc<GlobalConfiguration>,
+        server_str: &str,
+        sni_str: &str,
+    ) -> io::Result<Self> {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(
             webpki_roots::TLS_SERVER_ROOTS
@@ -62,53 +67,9 @@ impl TunnelSniomitTransformer {
         let server_name = server_str.parse()
             .unwrap_or(ServerName::Addr4("127.0.0.1".parse().unwrap()));
 
-        let mut cfg_content = String::new();
-        cfg_content.push_str("[req]\n");
-        cfg_content.push_str("prompt = no\n");
-        cfg_content.push_str("distinguished_name = req_distinguished_name\n");
-        cfg_content.push_str("req_extensions = reqext\n");
-        cfg_content.push_str("\n");
-        cfg_content.push_str("[req_distinguished_name]\n");
-        cfg_content.push_str("C  = CN\n");
-        cfg_content.push_str("ST = CQ\n");
-        cfg_content.push_str("L  = CQ\n");
-        cfg_content.push_str("O  = Xuxinhang\n");
-        cfg_content.push_str("OU = Xuxinhang\n");
-
         let (crt_file, key_file) = match server_name {
             ServerName::Addr4(_addr) => {
-                let crt_file_name = format!("tls_certs/tls_addr4__{}__crt.crt", server_str);
-                let csr_file_name = format!("tls_certs/tls_addr4__{}__csr.pem", server_str);
-                let key_file_name = format!("tls_certs/tls_addr4__{}__key.pem", server_str);
-                if !std::path::Path::new(&crt_file_name).exists() {
-                    println!("Creating TLS certificate (Addr4).");
-                    let mut content = cfg_content.clone();
-                    content.push_str(&format!("CN = {}\n", server_str));
-                    content.push_str("\n");
-                    content.push_str("[reqext]");
-                    content.push_str(&format!("subjectAltName = IP.1:{}", server_str));
-                    content.push_str("\n");
-                    // content.push_str("subjectAltName = DNS.1:*.zhihu.com,DNS.2:sina.cn");
-
-                    let config_file_name = "tls_certs/_config.tmp";
-                    let mut config_file = std::fs::File::create(config_file_name)?;
-                    config_file.write(content.as_bytes())?;
-
-                    std::process::Command::new(&global_configuration.openssl_path)
-                        .arg(format!(
-                            " req -newkey rsa:2048 -nodes -keyout {} -out {} -config {}",
-                            key_file_name, csr_file_name, config_file_name
-                        ))
-                        .output()?;
-
-                    std::process::Command::new(&global_configuration.openssl_path)
-                        .arg(format!(
-                            " x509 -req -in {} -CA {} -CAkey {} -out {} -CAcreateserial -extfile {} -extensions reqext",
-                            csr_file_name, "root_crt.pem", "root_key.pem", crt_file_name, config_file_name
-                        ))
-                        .output()?;
-                }
-                (crt_file_name, key_file_name)
+                unimplemented!();
             }
             ServerName::Addr6(_) => {
                 unimplemented!();
@@ -120,7 +81,7 @@ impl TunnelSniomitTransformer {
                 let key_file_name = String::from("certs/tls_default_key.pem");
 
                 if !std::path::Path::new(&crt_file_name).exists() {
-                    println!("Creating TLS certificate ({})...", domain_name);
+                    wd_log::log_info_ln!("Creating TLS certificate ({})...", domain_name);
                     std::process::Command::new(&global_configuration.openssl_path)
                         .args([
                             "req", "-new", "-key", &key_file_name,
@@ -157,19 +118,21 @@ impl TunnelSniomitTransformer {
                 )
                 .expect("bad local_tls_conf")
         );
-        let remote_tls_conf =
+        let mut remote_tls_conf =
             ClientConfig::builder()
                 .with_safe_defaults()
                 .with_root_certificates(root_store)
                 .with_no_client_auth();
-        // remote_tls_conf.enable_sni = false;
+        remote_tls_conf.enable_sni = false;
         let remote_tls_conf = Arc::new(remote_tls_conf);
 
         Ok(Self {
             local_tls: ServerConnection::new(local_tls_conf).unwrap(),
             remote_tls: ClientConnection::new(
                 remote_tls_conf,
-                server_str.try_into().unwrap_or("example.com".try_into().unwrap()),
+                sni_str.try_into().unwrap_or(
+                    server_str.try_into().unwrap_or("localhost".try_into().unwrap()),
+                ),
             ).unwrap(),
             _global_configuration: global_configuration,
             transmit_plaintext_buffer: Vec::new(),
@@ -204,7 +167,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
                         if expected_plaintext_size != 0 {
                             let mut current_plaintext_size = 0;
-                            let mut buf = vec![0; 4096];
+                            let mut buf = vec![0; MAX_BUFFER_UINT_SIZE];
                             while current_plaintext_size < expected_plaintext_size {
                                 match tls.reader().read(&mut buf) {
                                     Err(_) => {
@@ -291,7 +254,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
                         if expected_plaintext_size != 0 {
                             let mut current_plaintext_size = 0;
-                            let mut buf = vec![0; 4096];
+                            let mut buf = vec![0; MAX_BUFFER_UINT_SIZE];
                             while current_plaintext_size < expected_plaintext_size {
                                 match tls.reader().read(&mut buf) {
                                     Err(_) => {
@@ -354,18 +317,6 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
             unreachable!();
         }
-
-        // println!("> receive_read {}", self.remote_tls_closed);
-        // let tls = &mut self.local_tls;
-        // if !tls.wants_write() {
-        //     if self.remote_tls_closed || self.remote_tls_error {
-        //         return Ok(Some(0));
-        //     } else {
-        //         return Ok(None);
-        //     }
-        // }
-        // let n = tls.write_tls(target)?;
-        // Ok(Some(n))
     }
 }
 
