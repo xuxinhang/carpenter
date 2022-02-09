@@ -78,7 +78,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
             Ok(None) => TransferResult::Data(0),
-            Err(_) => TransferResult::Error,
+            Err(e) => TransferResult::IoError(e),
         }
     }
     fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
@@ -86,7 +86,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
             Ok(None) => TransferResult::Data(0),
-            Err(_) => TransferResult::Error,
+            Err(e) => TransferResult::IoError(e),
         }
     }
     fn receive_write(&mut self, source: &mut impl Read) -> TransferResult {
@@ -94,7 +94,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
             Ok(None) => TransferResult::Data(0),
-            Err(_) => TransferResult::Error,
+            Err(e) => TransferResult::IoError(e),
         }
     }
     fn receive_read(&mut self, target: &mut impl Write) -> TransferResult {
@@ -102,7 +102,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
             Ok(None) => TransferResult::Data(0),
-            Err(_) => TransferResult::Error,
+            Err(e) => TransferResult::IoError(e),
         }
     }
 }

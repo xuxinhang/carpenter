@@ -63,7 +63,7 @@ fn start_proxy_server(el: &mut EventLoop, global_config: Rc<GlobalConfiguration>
             let result = proxy_http::HttpProxyServer::new(addr, global_config);
             if result.is_ok() {
                 let http_server = result.unwrap();
-                match el.register(Box::new(http_server)) {
+                match http_server.initial_register(el) {
                     Ok(_) => {
                         wd_log::log_info_ln!("HTTP proxy server started on {}", http_server_addr);
                     }

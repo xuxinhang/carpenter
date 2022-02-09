@@ -12,5 +12,6 @@ pub trait TunnelTransformer {
 pub enum TransferResult {
     End(usize),
     Data(usize),
-    Error,
+    IoError(std::io::Error),
+    TlsError(rustls::Error),
 }

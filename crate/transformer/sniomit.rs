@@ -123,7 +123,7 @@ impl TunnelSniomitTransformer {
                 .with_safe_defaults()
                 .with_root_certificates(root_store)
                 .with_no_client_auth();
-        remote_tls_conf.enable_sni = false;
+        // remote_tls_conf.enable_sni = false;
         let remote_tls_conf = Arc::new(remote_tls_conf);
 
         Ok(Self {
@@ -153,15 +153,15 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
         // we have ensured no plaintext left.
         match tls.read_tls(source) {
-            Err(_) => {
+            Err(e) => {
                 self.transmit_plaintext_buffer.push(Vec::new());
-                return TransferResult::Error;
+                return TransferResult::IoError(e);
             }
             Ok(read_size) => {
                 match tls.process_new_packets() {
-                    Err(_) => {
+                    Err(e) => {
                         self.transmit_plaintext_buffer.push(Vec::new());
-                        return TransferResult::Error;
+                        return TransferResult::TlsError(e);
                     }
                     Ok(tls_state) => {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
@@ -170,9 +170,9 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                             let mut buf = vec![0; MAX_BUFFER_UINT_SIZE];
                             while current_plaintext_size < expected_plaintext_size {
                                 match tls.reader().read(&mut buf) {
-                                    Err(_) => {
+                                    Err(e) => {
                                         self.transmit_plaintext_buffer.push(Vec::new());
-                                        return TransferResult::Error;
+                                        return TransferResult::IoError(e);
                                     }
                                     Ok(n) => {
                                         current_plaintext_size += n;
@@ -195,12 +195,13 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
     fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
         let tls = &mut self.remote_tls;
+        println!("transmit_read before :: {} {} {}", tls.wants_write(), self.transmit_plaintext_buffer.len(), tls.is_handshaking());
 
         loop {
             if tls.wants_write() {
                 match tls.write_tls(target) {
-                    Err(_) => {
-                        return TransferResult::Error;
+                    Err(e) => {
+                        return TransferResult::IoError(e);
                     }
                     Ok(n) => {
                         return TransferResult::Data(n);
@@ -212,6 +213,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                 return TransferResult::End(0);
             } else {
                 if self.transmit_plaintext_buffer.is_empty() {
+                    println!("Data(0) {} {}", tls.wants_write(), self.transmit_plaintext_buffer.len());
                     return TransferResult::Data(0);
                 }
                 let mut buf = self.transmit_plaintext_buffer.remove(0);
@@ -240,15 +242,15 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
         // we have ensured no plaintext left.
         match tls.read_tls(source) {
-            Err(_) => {
+            Err(e) => {
                 self.receive_plaintext_buffer.push(Vec::new());
-                return TransferResult::Error;
+                return TransferResult::IoError(e);
             }
             Ok(read_size) => {
                 match tls.process_new_packets() {
-                    Err(_) => {
+                    Err(e) => {
                         self.receive_plaintext_buffer.push(Vec::new());
-                        return TransferResult::Error;
+                        return TransferResult::TlsError(e);
                     }
                     Ok(tls_state) => {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
@@ -257,9 +259,9 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                             let mut buf = vec![0; MAX_BUFFER_UINT_SIZE];
                             while current_plaintext_size < expected_plaintext_size {
                                 match tls.reader().read(&mut buf) {
-                                    Err(_) => {
+                                    Err(e) => {
                                         self.receive_plaintext_buffer.push(Vec::new());
-                                        return TransferResult::Error;
+                                        return TransferResult::IoError(e);
                                     }
                                     Ok(n) => {
                                         current_plaintext_size += n;
@@ -286,8 +288,8 @@ impl TunnelTransformer for TunnelSniomitTransformer {
         loop {
             if tls.wants_write() {
                 match tls.write_tls(target) {
-                    Err(_) => {
-                        return TransferResult::Error;
+                    Err(e) => {
+                        return TransferResult::IoError(e);
                     }
                     Ok(n) => {
                         return TransferResult::Data(n);
