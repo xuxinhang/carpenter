@@ -9,12 +9,6 @@ pub trait EventHandler {
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
     fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
-    // fn targeter(&mut self) -> Option<Box<dyn EventTargeter>> {
-    //     None
-    // }
-    // fn target(&mut self) -> Option<(&mut dyn Source, Token, Interest)> {
-    //     None
-    // }
 }
 
 pub struct EventRegistryIntf(*mut EventLoop, Token, Interest);
@@ -73,10 +67,6 @@ impl EventRegistryIntf {
 }
 
 
-// pub trait EventTargeter {
-//     fn get(&mut self) -> (&mut dyn Source, Token, Interest);
-// }
-
 pub struct EventLoop {
     poll: Poll,
     events: Events,
@@ -99,16 +89,12 @@ impl EventLoop {
     pub fn register(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
         hdlr.as_mut().register(&mut self.registry_intf)?;
         self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
-        // panic!("WARN: Handler token rewritten.");
         Ok(())
     }
 
     pub fn reregister(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
         hdlr.as_mut().reregister(&mut self.registry_intf)?;
         self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
-        // if self.handlers.insert(self.registry_intf.1, (self.registry_intf.2, hdlr)).is_some() {
-        //     // nothing
-        // }
         Ok(())
     }
 

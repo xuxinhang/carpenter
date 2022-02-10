@@ -195,7 +195,6 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
     fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
         let tls = &mut self.remote_tls;
-        println!("transmit_read before :: {} {} {}", tls.wants_write(), self.transmit_plaintext_buffer.len(), tls.is_handshaking());
 
         loop {
             if tls.wants_write() {
@@ -213,7 +212,6 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                 return TransferResult::End(0);
             } else {
                 if self.transmit_plaintext_buffer.is_empty() {
-                    println!("Data(0) {} {}", tls.wants_write(), self.transmit_plaintext_buffer.len());
                     return TransferResult::Data(0);
                 }
                 let mut buf = self.transmit_plaintext_buffer.remove(0);
