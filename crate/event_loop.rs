@@ -131,6 +131,7 @@ impl EventLoop {
                     let (_, hdlr) = hdlr_lst.remove(*x);
                     hdlr
                 }));
+                // TODO
                 // if hdlr_lst.is_empty() {
                 //     self.handlers.remove(&tok);
                 // }

@@ -9,6 +9,7 @@ use std::net::{SocketAddr, Shutdown, ToSocketAddrs};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::http_header_parser::parse_http_header;
 use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer};
+use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
 use crate::configuration::GlobalConfiguration;
 
 
@@ -76,8 +77,7 @@ impl EventHandler for HttpProxyServer {
                 let token_id = self.as_mut().counter.get();
                 let client = ProxyRequestHandler {
                     global_configuration: self.global_configuration.clone(),
-                    token: Token(token_id),
-                    client: ClientShakingConnection::from_connection(conn),
+                    client: ClientShakingConnection::from_connection(Token(token_id + 1), conn),
                 };
                 if let Err(e) = event_loop.register(Box::new(client)) {
                     wd_log::log_warn_ln!("HttpProxyServer # Fail to register the new client connection {:?}", e);
@@ -96,12 +96,13 @@ impl EventHandler for HttpProxyServer {
 
 
 struct ClientShakingConnection {
+    token: Token,
     client_conn: TcpStream,
 }
 
 impl ClientShakingConnection {
-    fn from_connection(conn: TcpStream) -> Self {
-        Self { client_conn: conn }
+    fn from_connection(token: Token, conn: TcpStream) -> Self {
+        Self { client_conn: conn, token }
     }
 }
 
@@ -151,13 +152,12 @@ impl Tunnel {
 
 struct ProxyRequestHandler {
     global_configuration: Rc<GlobalConfiguration>,
-    token: Token,
     client: ClientShakingConnection,
 }
 
 impl EventHandler for ProxyRequestHandler {
     fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        registry.register(&mut self.client.client_conn, self.token, Interest::READABLE)
+        registry.register(&mut self.client.client_conn, self.client.token, Interest::READABLE)
     }
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
@@ -189,43 +189,72 @@ impl EventHandler for ProxyRequestHandler {
             let request_host = msg_headers[":path"].clone();
             let request_hostname = request_host.split(':').next().unwrap();
 
-            let result = request_host.to_socket_addrs();
-            if result.is_err() {
-                wd_log::log_warn_ln!("ProxyRequestHandler # Cannot find DNS Name {:?}", request_host);
-                return;
+            let transformer =
+                TunnelSniomitTransformer::new(
+                    self.global_configuration.clone(),
+                    request_hostname,
+                    request_hostname,
+                ).unwrap();
+
+            if true {
+                let result = request_host.to_socket_addrs();
+                if result.is_err() {
+                    wd_log::log_warn_ln!("ProxyRequestHandler # Cannot find DNS Name {:?}", request_host);
+                    return;
+                }
+
+                let mut proxy_client = ProxyClientDirect::new(result.unwrap().next().unwrap());
+                let result = proxy_client.connect(
+                    Token(self.client.token.0 + 1),
+                    event_loop,
+                    Box::new(ProxyRequestConnectedHandler {
+                        client: self.client,
+                        transformer,
+                    }),
+                );
+                if result.is_err() {
+                    wd_log::log_warn_ln!("ProxyRequestHandler # ProxyClientDirect::connect error");
+                    return;
+                }
             }
 
-            let result = TcpStream::connect(result.unwrap().next().unwrap());
-            if result.is_err() {
-                wd_log::log_warn_ln!("ProxyRequestHandler # TcpStream::connect error");
-                return;
-            }
-            let peer_conn = result.unwrap();
+            // let result = TcpStream::connect(result.unwrap().next().unwrap());
+            // if result.is_err() {
+            //     wd_log::log_warn_ln!("ProxyRequestHandler # TcpStream::connect error");
+            //     return;
+            // }
+            // let peer_conn = result.unwrap();
 
-            let transformer = TunnelSniomitTransformer::new(
-                self.global_configuration.clone(),
-                request_hostname,
-                request_hostname,
-            ).unwrap();
-            let tunnel = Tunnel::from_connection(
-                Token(self.token.0 + 1), self.client.client_conn,
-                Token(self.token.0 + 2), peer_conn,
-                transformer,
-            );
-            let next_handler = ProxyResponseHandler {
-                global_configuration: self.global_configuration.clone(),
-                tunnel,
-            };
-            if let Err(e) = event_loop.reregister(Box::new(next_handler)) {
-                println!("ProxyRequestHandler # event_loop.register {:?}", e);
-            }
+            // if let Err(e) = event_loop.reregister(Box::new(next_handler)) {
+            //     println!("ProxyRequestHandler # event_loop.register {:?}", e);
+            // }
         }
     }
 }
 
 
+struct ProxyRequestConnectedHandler {
+    client: ClientShakingConnection,
+    transformer: TunnelSniomitTransformer,
+}
+
+impl ProxyClientReadyCall for ProxyRequestConnectedHandler {
+    fn proxy_client_ready(self: Box<Self>, event_loop: &mut EventLoop, peer_source: TcpStream) -> io::Result<()> {
+        let next_handler = ProxyResponseHandler {
+            tunnel: Tunnel::from_connection(
+                Token(self.client.token.0 + 0), self.client.client_conn,
+                Token(self.client.token.0 + 1), peer_source,
+                self.transformer
+            ),
+        };
+        event_loop.reregister(Box::new(next_handler)).unwrap();
+        Ok(())
+    }
+}
+
+
 struct ProxyResponseHandler {
-    global_configuration: Rc<GlobalConfiguration>,
+    // global_configuration: Rc<GlobalConfiguration>,
     tunnel: Tunnel,
 }
 
@@ -254,7 +283,7 @@ impl EventHandler for ProxyResponseHandler {
                     })) {
                         println!("ProxyResponseHandler # event_loop.register {:?}", e);
                     }
-                    if let Err(e) = event_loop.register(Box::new(ProxyTransferRemoteReadableHandler {
+                    if let Err(e) = event_loop.reregister(Box::new(ProxyTransferRemoteReadableHandler {
                         tunnel: tunnel_ptr.clone(),
                     })) {
                         println!("ProxyResponseHandler # event_loop.register {:?}", e);

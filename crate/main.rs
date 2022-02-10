@@ -3,6 +3,8 @@ pub mod proxy_http;
 pub mod http_header_parser;
 pub mod transformer;
 pub mod configuration;
+pub mod proxy_client;
+pub mod common;
 
 use event_loop::EventLoop;
 use std::rc::Rc;
