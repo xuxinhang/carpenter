@@ -8,9 +8,9 @@ use mio::net::{TcpListener, TcpStream};
 use std::net::{SocketAddr, Shutdown, ToSocketAddrs};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::http_header_parser::parse_http_header;
-use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer};
+use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer, TunnelDirectTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
-use crate::configuration::GlobalConfiguration;
+use crate::configuration::{GlobalConfiguration, TransformerConfig};
 
 
 
@@ -109,7 +109,7 @@ impl ClientShakingConnection {
 struct Tunnel {
     local_conn: TcpStream,
     remote_conn: TcpStream,
-    transformer: TunnelSniomitTransformer,
+    transformer: Box<dyn TunnelTransformer>,
     local_token: Token,
     remote_token: Token,
 }
@@ -120,7 +120,7 @@ impl Tunnel {
         local_conn: TcpStream,
         remote_token: Token,
         remote_conn: TcpStream,
-        transformer: TunnelSniomitTransformer,
+        transformer: Box<dyn TunnelTransformer>,
     ) -> Self {
         Self {
             local_conn,
@@ -179,7 +179,6 @@ impl EventHandler for ProxyRequestHandler {
             let (header_length, msg_headers) = result.unwrap();
             let mut trash = vec![0; header_length];
             let result = conn.read(&mut trash);
-            // println!("HEADER {}", String::from_utf8(trash).unwrap());
 
             if result.is_err() {
                 println!("ProxyRequestHandler # read error.");
@@ -187,29 +186,76 @@ impl EventHandler for ProxyRequestHandler {
             }
 
             let request_host = msg_headers[":path"].clone();
-            let request_hostname = request_host.split(':').next().unwrap();
+            let (request_hostname, request_port) = match request_host.rsplit_once(':') {
+                None => {
+                    wd_log::log_warn_ln!("unexpected request host: {}", request_host);
+                    return;
+                }
+                Some((h, p)) => {
+                    let pn: u16 = p.parse().unwrap_or(0);
+                    if pn == 0 {
+                        wd_log::log_warn_ln!("unexpected request host: {}", request_host);
+                        return;
+                    }
+                    (h, pn)
+                },
+            };
 
-            let transformer =
-                TunnelSniomitTransformer::new(
+            // 1) Decide which transformer to use
+            let transformer_config =
+                self.global_configuration.transformer_host_matcher.get(
+                    request_port, request_hostname);
+            let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
+                Some(TransformerConfig::SniTransformer(s)) => {
+                    let (sni_enable, sni_value) = match s.as_str() {
+                        "_" => (false, request_hostname),
+                        "*" => (true, request_hostname),
+                        h => (true, h),
+                    };
+                    println!("Use TunnelSni {} {}", sni_enable, sni_value);
+                    Box::new(TunnelSniomitTransformer::new(
+                        self.global_configuration.clone(),
+                        request_hostname,
+                        sni_value,
+                        sni_enable,
+                    ).unwrap())
+                }
+                Some(TransformerConfig::DirectTransformer) | None => {
+                    println!("Use Direct");
+                    Box::new(TunnelDirectTransformer::new())
+                }
+            };
+            /* let transformer_boxed: Box<dyn TunnelTransformer> =
+            if request_hostname.find("12306.cn").is_some() {
+                Box::new(TunnelDirectTransformer::new())
+            } else {
+                Box::new(TunnelSniomitTransformer::new(
                     self.global_configuration.clone(),
                     request_hostname,
                     request_hostname,
-                ).unwrap();
+                    request_hostname.find("zhi").is_some(),
+                ).unwrap())
+            }; */
 
-            if true {
+            // 2) DNS query
+            let mut socket_addr = {
                 let result = request_host.to_socket_addrs();
                 if result.is_err() {
                     wd_log::log_warn_ln!("ProxyRequestHandler # Cannot find DNS Name {:?}", request_host);
                     return;
                 }
+                result.unwrap()
+            };
 
-                let mut proxy_client = ProxyClientDirect::new(result.unwrap().next().unwrap());
+            // 3) Establish outbound data tunnel.
+            {
+                let mut proxy_client = ProxyClientDirect::new(socket_addr.next().unwrap());
                 let result = proxy_client.connect(
                     Token(self.client.token.0 + 1),
                     event_loop,
                     Box::new(ProxyRequestConnectedHandler {
                         client: self.client,
-                        transformer,
+                        transformer: transformer_boxed, // Box::new(transformer),
                     }),
                 );
                 if result.is_err() {
@@ -235,7 +281,7 @@ impl EventHandler for ProxyRequestHandler {
 
 struct ProxyRequestConnectedHandler {
     client: ClientShakingConnection,
-    transformer: TunnelSniomitTransformer,
+    transformer: Box<dyn TunnelTransformer>,
 }
 
 impl ProxyClientReadyCall for ProxyRequestConnectedHandler {
@@ -244,7 +290,7 @@ impl ProxyClientReadyCall for ProxyRequestConnectedHandler {
             tunnel: Tunnel::from_connection(
                 Token(self.client.token.0 + 0), self.client.client_conn,
                 Token(self.client.token.0 + 1), peer_source,
-                self.transformer
+                self.transformer,
             ),
         };
         event_loop.reregister(Box::new(next_handler)).unwrap();

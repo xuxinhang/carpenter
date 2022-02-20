@@ -1,0 +1,30 @@
+*:443 +direct
+
+wikipedia.org:443  +sni _
+*.wikipedia.org:443  +sni _
+gist.github.com:443  +sni _
+*.github.com:443  +sni _
+sina.cn:443   +sni _
+*.sina.cn:443 +sni *
+*.reddit.com:443 +sni _
+
+
+*.reddit.com  +sni _
+web.archive.org  +sni web.archive.com
+www.pixiv.net  +sni www.pixiv.com
+www.instagram.com  +sni graph.cdninstagram.com
+github*s3.amazonaws.com  +sni s3-1-w.amazonaws.com
+facebook.com  +sni _
+facebook.net  +sni _
+*.fbcdn.net  +sni _
+*.fbsbx.com  +sni _
+*.bbc.com  +sni _
+*.bbc.co.uk  +sni _
+*.bbci.co.uk  +sni _
+*.imgur.com  +sni _
+*.live.com  +sni _
+*.tgchannels.org  +sni _
+tumblr.com  +sni _
+travis-ci.org  +sni _
+# cn.nytimes.com = same@d1f1eryiqyjs0r.cloudfront.net
+# .nytimes.com = *.cloudfront.net

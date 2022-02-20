@@ -49,6 +49,7 @@ impl TunnelSniomitTransformer {
         global_configuration: Rc<GlobalConfiguration>,
         server_str: &str,
         sni_str: &str,
+        enable_sni: bool,
     ) -> io::Result<Self> {
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(
@@ -123,7 +124,9 @@ impl TunnelSniomitTransformer {
                 .with_safe_defaults()
                 .with_root_certificates(root_store)
                 .with_no_client_auth();
-        // remote_tls_conf.enable_sni = false;
+        if !enable_sni {
+            remote_tls_conf.enable_sni = false;
+        }
         let remote_tls_conf = Arc::new(remote_tls_conf);
 
         Ok(Self {
@@ -145,7 +148,7 @@ impl TunnelSniomitTransformer {
 
 
 impl TunnelTransformer for TunnelSniomitTransformer {
-    fn transmit_write(&mut self, source: &mut impl Read) -> TransferResult {
+    fn transmit_write(&mut self, source: &mut dyn Read) -> TransferResult {
         let tls = &mut self.local_tls;
         // if !tls.wants_read() {
         //     return TransferResult::Data(0);
@@ -193,7 +196,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
         }
     }
 
-    fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
+    fn transmit_read(&mut self, target: &mut dyn Write) -> TransferResult {
         let tls = &mut self.remote_tls;
 
         loop {
@@ -232,7 +235,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
         }
     }
 
-    fn receive_write(&mut self, source: &mut impl Read) -> TransferResult {
+    fn receive_write(&mut self, source: &mut dyn Read) -> TransferResult {
         let tls = &mut self.remote_tls;
         // if !tls.wants_read() {
         //     return TransferResult::Data(0);
@@ -280,7 +283,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
         }
     }
 
-    fn receive_read(&mut self, target: &mut impl Write) -> TransferResult {
+    fn receive_read(&mut self, target: &mut dyn Write) -> TransferResult {
         let tls = &mut self.local_tls;
 
         loop {

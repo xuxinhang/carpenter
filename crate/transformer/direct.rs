@@ -23,7 +23,7 @@ impl TunnelPacketBuffer {
     //     accu_size
     // }
 
-    fn read_from(&mut self, sock: &mut impl Read) -> io::Result<Option<usize>> {
+    fn read_from(&mut self, sock: &mut dyn Read) -> io::Result<Option<usize>> {
         let mut accu_size = 0;
         while self.buf.len() <= 64 {
             let mut b = vec![0; 4096];
@@ -42,7 +42,7 @@ impl TunnelPacketBuffer {
         Ok(Some(accu_size))
     }
 
-    fn write_into(&mut self, sock: &mut impl Write) -> io::Result<Option<usize>> {
+    fn write_into(&mut self, sock: &mut dyn Write) -> io::Result<Option<usize>> {
         if self.buf.is_empty() {
             return Ok(None);
         }
@@ -73,7 +73,7 @@ impl TunnelDirectTransformer {
 }
 
 impl TunnelTransformer for TunnelDirectTransformer {
-    fn transmit_write(&mut self, source: &mut impl Read) -> TransferResult {
+    fn transmit_write(&mut self, source: &mut dyn Read) -> TransferResult {
         match self.transmit_buffer.read_from(source) {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
@@ -81,7 +81,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Err(e) => TransferResult::IoError(e),
         }
     }
-    fn transmit_read(&mut self, target: &mut impl Write) -> TransferResult {
+    fn transmit_read(&mut self, target: &mut dyn Write) -> TransferResult {
         match self.transmit_buffer.write_into(target) {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
@@ -89,7 +89,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Err(e) => TransferResult::IoError(e),
         }
     }
-    fn receive_write(&mut self, source: &mut impl Read) -> TransferResult {
+    fn receive_write(&mut self, source: &mut dyn Read) -> TransferResult {
         match self.receive_buffer.read_from(source) {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
@@ -97,7 +97,7 @@ impl TunnelTransformer for TunnelDirectTransformer {
             Err(e) => TransferResult::IoError(e),
         }
     }
-    fn receive_read(&mut self, target: &mut impl Write) -> TransferResult {
+    fn receive_read(&mut self, target: &mut dyn Write) -> TransferResult {
         match self.receive_buffer.write_into(target) {
             Ok(Some(0)) => TransferResult::End(0),
             Ok(Some(n)) => TransferResult::Data(n),
