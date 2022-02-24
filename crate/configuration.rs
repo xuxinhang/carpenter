@@ -78,7 +78,7 @@ pub fn load_tls_private_key(file_path: &str) -> io::Result<rustls::PrivateKey> {
 
 #[derive(serde_derive::Deserialize)]
 struct TransformerMatcherConfigFileFormat {
-    rules: toml::map::Map<String, toml::Value>,
+    _rules: toml::map::Map<String, toml::Value>,
 }
 
 fn load_transformer_matcher() -> HostMatchTree<TransformerConfig> {

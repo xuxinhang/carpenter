@@ -137,3 +137,54 @@ impl<P: Clone> HostMatchTree<P> {
         };
     }
 }
+
+
+pub struct DomainNameMatchTree<P> {
+    store: TierTree,
+    profiles: Vec<(usize, P)>,
+}
+
+impl<P: Clone> DomainNameMatchTree<P> {
+    pub fn new() -> Self {
+        Self {
+            store: TierTree::create_root(),
+            profiles: Vec::new(),
+        }
+    }
+
+    pub fn insert(&mut self, domain_name: &str, accept: P) {
+        let char_count = domain_name.chars().filter(|c| *c != '*').count();
+        self.profiles.push((char_count, accept));
+        let store_tree = &mut self.store;
+        store_tree.insert(
+            &mut domain_name.chars().rev().collect::<String>().chars(),
+            self.profiles.len() - 1,
+        );
+    }
+
+    pub fn get(&self, domain_name: &str) -> Option<P> {
+        let mut search_pattern = domain_name.chars().rev().collect::<String>();
+        let mut final_profile = None;
+        let mut final_prof_score: isize = -1;
+
+        search_pattern.push('.');
+        let accept_idx = self.store.get(&mut search_pattern.chars());
+        if !accept_idx.is_empty() {
+            let i = accept_idx.iter().max_by_key(|x| self.profiles[**x].0).unwrap();
+            final_prof_score = self.profiles[*i].0 as isize - 1;
+            final_profile = Some(self.profiles[*i].1.clone());
+        }
+
+        search_pattern.pop();
+        let accept_idx = self.store.get(&mut search_pattern.chars());
+        if !accept_idx.is_empty() {
+            let i = accept_idx.iter().max_by_key(|x| self.profiles[**x].0).unwrap();
+            if final_prof_score <= self.profiles[*i].0 as isize {
+                // final_prof_score = self.profiles[*i].0;
+                final_profile = Some(self.profiles[*i].1.clone());
+            }
+        }
+
+        return final_profile;
+    }
+}

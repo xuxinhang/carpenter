@@ -5,13 +5,14 @@ edition = "2021"
 
 [dependencies]
 mio = { version = "0.8", features = ["net", "os-poll", "os-ext"] }
-rustls = "0.20.2"
+rustls = { version = "0.20.2", features = ["dangerous_configuration"] }
 rustls-pemfile = "0.2.1"
 webpki-roots = "0.21.1"
 wd_log = "0.1"
 toml = "0.5.8"
 serde = "1.0"
 serde_derive = "1.0.117"
+domain = "0.6.1"
 
 
 [[bin]]

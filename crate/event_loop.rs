@@ -7,8 +7,8 @@ use mio::event::{Event, Source};
 
 pub trait EventHandler {
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
+    fn register(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
+    fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
 }
 
 pub struct EventRegistryIntf(*mut EventLoop, Token, Interest);

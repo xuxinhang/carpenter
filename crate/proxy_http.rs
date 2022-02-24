@@ -5,12 +5,13 @@ use std::cell::RefCell;
 use mio::{Interest, Token};
 use mio::event::{Event};
 use mio::net::{TcpListener, TcpStream};
-use std::net::{SocketAddr, Shutdown, ToSocketAddrs};
+use std::net::{SocketAddr, Shutdown, ToSocketAddrs, IpAddr};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::http_header_parser::parse_http_header;
 use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer, TunnelDirectTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
 use crate::configuration::{GlobalConfiguration, TransformerConfig};
+use crate::dnsresolver::{DnsResolveCallback, DnsDotResolver};
 
 
 
@@ -29,6 +30,14 @@ impl IncrementalCounter {
     }
 }
 
+
+fn store_dns_record_into_global_dns_cache(domain: &str, ip: IpAddr) {
+   crate::global::get_global_stuff().borrow_mut().dns_cache.insert(domain, ip);
+}
+
+fn fetch_dns_record_from_global_dns_cache(domain: &str) -> Option<IpAddr> {
+   crate::global::get_global_stuff().borrow().dns_cache.get(domain)
+}
 
 
 pub struct HttpProxyServer {
@@ -201,79 +210,111 @@ impl EventHandler for ProxyRequestHandler {
                 },
             };
 
-            // 1) Decide which transformer to use
-            let transformer_config =
-                self.global_configuration.transformer_host_matcher.get(
-                    request_port, request_hostname);
-            let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
-                Some(TransformerConfig::SniTransformer(s)) => {
-                    let (sni_enable, sni_value) = match s.as_str() {
-                        "_" => (false, request_hostname),
-                        "*" => (true, request_hostname),
-                        h => (true, h),
-                    };
-                    println!("Use TunnelSni {} {}", sni_enable, sni_value);
-                    Box::new(TunnelSniomitTransformer::new(
-                        self.global_configuration.clone(),
-                        request_hostname,
-                        sni_value,
-                        sni_enable,
-                    ).unwrap())
+            // 1) DNS resolve
+            let query_ready_callback = Box::new(ProxyQueryDoneCallback {
+                global_configuration: self.global_configuration.clone(),
+                client: self.client,
+                remote_hostname: request_hostname.to_string(),
+                remote_port: request_port,
+            });
+            match fetch_dns_record_from_global_dns_cache(request_hostname) {
+                Some(addr) => {
+                    println!("DNS Result : {} {} (cache)", request_hostname, addr);
+                    query_ready_callback.do_work(Some(addr), event_loop);
                 }
-                Some(TransformerConfig::DirectTransformer) | None => {
-                    println!("Use Direct");
-                    Box::new(TunnelDirectTransformer::new())
+                None => {
+                    let dns_query_token = Token(query_ready_callback.client.token.0 + 7);
+                    let dns_server_socker_addr = "223.5.5.5:853".to_socket_addrs().unwrap().next().unwrap();
+                    let resolver = DnsDotResolver::new(dns_server_socker_addr);
+                    resolver.query(request_hostname, query_ready_callback, dns_query_token, event_loop);
+                    // ??
                 }
-            };
-            /* let transformer_boxed: Box<dyn TunnelTransformer> =
-            if request_hostname.find("12306.cn").is_some() {
-                Box::new(TunnelDirectTransformer::new())
-            } else {
+            }
+        }
+    }
+}
+
+
+struct ProxyQueryDoneCallback {
+    global_configuration: Rc<GlobalConfiguration>,
+    client: ClientShakingConnection,
+    remote_hostname: String,
+    remote_port: u16,
+}
+
+impl DnsResolveCallback for ProxyQueryDoneCallback {
+    fn dns_resolve_ready(self: Box<Self>, addr: Option<IpAddr>, event_loop: &mut EventLoop) {
+        if addr.is_none() {
+            println!("ProxyQueryDoneHandler # Fail to resolve host \"{}\"", self.remote_hostname);
+            return;
+        }
+        let addr = addr.unwrap();
+        println!("DNS Result : {} {} (new)", self.remote_hostname, addr);
+        store_dns_record_into_global_dns_cache(&self.remote_hostname, addr.clone());
+        self.do_work(Some(addr), event_loop);
+    }
+}
+
+impl ProxyQueryDoneCallback {
+    fn do_work(self: Box<Self>, addr: Option<IpAddr>, event_loop: &mut EventLoop) {
+        if addr.is_none() {
+            println!("ProxyQueryDoneHandler # Fail to resolve host \"{}\"", self.remote_hostname);
+            return;
+        }
+        let addr = addr.unwrap();
+
+        // 1) Decide which transformer to use
+        let request_hostname = self.remote_hostname.as_str();
+        let request_port = self.remote_port;
+        let transformer_config =
+            self.global_configuration.transformer_host_matcher.get(
+                request_port, request_hostname);
+        let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
+            Some(TransformerConfig::SniTransformer(s)) => {
+                let (sni_enable, sni_value) = match s.as_str() {
+                    "_" => (false, request_hostname),
+                    "*" => (true, request_hostname),
+                    h => (true, h),
+                };
+                println!("Use TunnelSni {} {}", sni_enable, sni_value);
                 Box::new(TunnelSniomitTransformer::new(
                     self.global_configuration.clone(),
                     request_hostname,
-                    request_hostname,
-                    request_hostname.find("zhi").is_some(),
-                ).unwrap())
-            }; */
-
-            // 2) DNS query
-            let mut socket_addr = {
-                let result = request_host.to_socket_addrs();
-                if result.is_err() {
-                    wd_log::log_warn_ln!("ProxyRequestHandler # Cannot find DNS Name {:?}", request_host);
-                    return;
-                }
-                result.unwrap()
-            };
-
-            // 3) Establish outbound data tunnel.
-            {
-                let mut proxy_client = ProxyClientDirect::new(socket_addr.next().unwrap());
-                let result = proxy_client.connect(
-                    Token(self.client.token.0 + 1),
-                    event_loop,
-                    Box::new(ProxyRequestConnectedHandler {
-                        client: self.client,
-                        transformer: transformer_boxed, // Box::new(transformer),
-                    }),
-                );
-                if result.is_err() {
-                    wd_log::log_warn_ln!("ProxyRequestHandler # ProxyClientDirect::connect error");
-                    return;
-                }
+                    sni_value,
+                    sni_enable,
+                ).unwrap()) // TODO
             }
+            Some(TransformerConfig::DirectTransformer) | None => {
+                println!("Use Direct");
+                Box::new(TunnelDirectTransformer::new())
+            }
+        };
+        /* let transformer_boxed: Box<dyn TunnelTransformer> =
+        if request_hostname.find("12306.cn").is_some() {
+            Box::new(TunnelDirectTransformer::new())
+        } else {
+            Box::new(TunnelSniomitTransformer::new(
+                self.global_configuration.clone(),
+                request_hostname,
+                request_hostname,
+                request_hostname.find("zhi").is_some(),
+            ).unwrap())
+        }; */
 
-            // let result = TcpStream::connect(result.unwrap().next().unwrap());
-            // if result.is_err() {
-            //     wd_log::log_warn_ln!("ProxyRequestHandler # TcpStream::connect error");
-            //     return;
-            // }
-            // let peer_conn = result.unwrap();
-
-            // if let Err(e) = event_loop.reregister(Box::new(next_handler)) {
-            //     println!("ProxyRequestHandler # event_loop.register {:?}", e);
-            // }
+        // 2) Establish outbound data tunnel.
+        let mut socket_addr = (addr, self.remote_port).to_socket_addrs().unwrap();
+        let mut proxy_client = ProxyClientDirect::new(socket_addr.next().unwrap());
+        let result = proxy_client.connect(
+            Token(self.client.token.0 + 1),
+            event_loop,
+            Box::new(ProxyRequestConnectedHandler {
+                client: self.client,
+                transformer: transformer_boxed, // Box::new(transformer),
+            }),
+        );
+        if result.is_err() {
+            wd_log::log_warn_ln!("ProxyQueryDoneHandler # ProxyClientDirect::connect error");
+            return;
         }
     }
 }

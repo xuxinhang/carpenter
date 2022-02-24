@@ -6,6 +6,9 @@ pub mod configuration;
 pub mod proxy_client;
 pub mod common;
 pub mod uri_match;
+pub mod dnsresolver;
+pub mod global;
+
 
 use event_loop::EventLoop;
 use std::rc::Rc;
@@ -13,13 +16,8 @@ use configuration::{GlobalConfiguration, load_default_configuration};
 
 
 fn main() {
-
-    let mut tree = uri_match::TierTree::create_root();
-    tree.insert(&mut String::from("*.z.cn").chars(), 0);
-    tree.insert(&mut String::from("z*g.z.cn").chars(), 1);
-    tree.insert(&mut String::from("bai.cc").chars(), 2);
-    let search_result = tree.get(&mut String::from("zimg.z.cn").chars());
-    println!("{:?}", search_result);
+    global::init_global_stuff();
+    global::get_global_stuff().borrow_mut().cnt = 9;
 
     wd_log::log_info_ln!("Hello, mio!");
     wd_log::log_info_ln!("Loading config");

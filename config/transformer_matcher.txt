@@ -7,9 +7,17 @@ gist.github.com:443  +sni _
 sina.cn:443   +sni _
 *.sina.cn:443 +sni *
 *.reddit.com:443 +sni _
+steampowered.com:443 +sni _
+*.steampowered.com:443 +sni _
+steamcommunity.com:443 +sni _
+*.steamcommunity.com:443 +sni _
+*.live.com:443  +sni _
+imgur.com:443  +sni _
+*.imgur.com:443  +sni _
+reddit.com:443  +sni _
+*.reddit.com:443  +sni _
 
 
-*.reddit.com  +sni _
 web.archive.org  +sni web.archive.com
 www.pixiv.net  +sni www.pixiv.com
 www.instagram.com  +sni graph.cdninstagram.com
