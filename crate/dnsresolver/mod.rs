@@ -2,11 +2,13 @@ use std::net::{IpAddr};
 use crate::event_loop::{EventLoop};
 
 
-mod dot;
 mod utils;
+mod dot;
+mod dou;
 
 
 pub use dot::DnsDotResolver;
+pub use dou::DnsDouResolver;
 
 
 pub trait DnsResolveCallback {

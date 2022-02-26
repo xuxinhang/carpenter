@@ -11,7 +11,7 @@ use crate::http_header_parser::parse_http_header;
 use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer, TunnelDirectTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
 use crate::configuration::{GlobalConfiguration, TransformerConfig};
-use crate::dnsresolver::{DnsResolveCallback, DnsDotResolver};
+use crate::dnsresolver::{DnsResolveCallback, DnsDotResolver, DnsDouResolver};
 
 
 
@@ -224,10 +224,13 @@ impl EventHandler for ProxyRequestHandler {
                 }
                 None => {
                     let dns_query_token = Token(query_ready_callback.client.token.0 + 7);
-                    let dns_server_socker_addr = "223.5.5.5:853".to_socket_addrs().unwrap().next().unwrap();
-                    let resolver = DnsDotResolver::new(dns_server_socker_addr);
-                    resolver.query(request_hostname, query_ready_callback, dns_query_token, event_loop);
+                    // let dns_server_socker_addr = "223.5.5.5:853".to_socket_addrs().unwrap().next().unwrap();
+                    // let resolver = DnsDotResolver::new(dns_server_socker_addr);
+                    // resolver.query(request_hostname, query_ready_callback, dns_query_token, event_loop);
                     // ??
+                    let dns_server_socker_addr = "223.5.5.5:53".to_socket_addrs().unwrap().next().unwrap();
+                    let resolver = DnsDouResolver::new(dns_server_socker_addr);
+                    resolver.query(request_hostname, query_ready_callback, dns_query_token, event_loop);
                 }
             }
         }
