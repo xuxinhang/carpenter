@@ -47,7 +47,7 @@ impl EventHandler for ClientShakingHandler {
     }
 
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
-        if true || event.is_readable() || event.is_writable() { // TODO
+        if true || event.is_readable() || event.is_writable() { // @HACK: TODO
             if let Ok(Some(e)) | Err(e) = self.conn.take_error() {
                 println!("ClientShakingHandler # take_error {:?}", e);
                 return;

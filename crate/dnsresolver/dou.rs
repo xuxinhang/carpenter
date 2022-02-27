@@ -26,7 +26,6 @@ impl DnsDouResolver {
         token: Token,
         event_loop: &mut EventLoop,
     ) -> () {
-        let socket = UdpSocket::bind("127.0.0.1:0".parse().unwrap());
         let socket = UdpSocket::bind("0.0.0.0:0".parse().unwrap());
         if let Err(e) = socket {
             println!("DnsDouResolver # tx_socket Error {:?}", e);
@@ -51,7 +50,6 @@ impl DnsDouResolver {
             sent_dns_message: dns_msg,
             // received_dns_messages: Vec
         };
-        println!("E");
         event_loop.register(Box::new(DnsDouResolverSenderWritableHandler {
             profile: Rc::new(RefCell::new(prof)),
             callback: callback,
@@ -81,7 +79,6 @@ impl EventHandler for DnsDouResolverSenderWritableHandler {
 
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
         if event.is_writable() {
-            println!("ERTT");
             let mut borw = self.profile.borrow_mut();
             let prof = &mut * borw;
             let size = prof.socket.send(&prof.sent_dns_message);

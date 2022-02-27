@@ -7,6 +7,7 @@ pub enum Hostname {
     Domain(String),
 }
 
+#[derive(Debug)]
 pub struct HostnameParseError();
 
 impl std::str::FromStr for Hostname {

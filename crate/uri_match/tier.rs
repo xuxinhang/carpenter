@@ -112,8 +112,8 @@ impl<P: Clone> HostMatchTree<P> {
                 let mut final_profile = None;
                 let mut final_prof_score: isize = -1;
 
-                // HACK: "*.example.com" should match both "example.com" and "sub.example.com"
-
+                // NOTE: the pattern "*.example.com" should match both "example.com" and
+                //       "sub.example.com"
                 search_pattern.push('.');
                 let accept_idx = t.get(&mut search_pattern.chars());
                 if !accept_idx.is_empty() {
@@ -139,12 +139,12 @@ impl<P: Clone> HostMatchTree<P> {
 }
 
 
-pub struct DomainNameMatchTree<P> {
+pub struct HostnameMatchTree<P> {
     store: TierTree,
     profiles: Vec<(usize, P)>,
 }
 
-impl<P: Clone> DomainNameMatchTree<P> {
+impl<P: Clone> HostnameMatchTree<P> {
     pub fn new() -> Self {
         Self {
             store: TierTree::create_root(),

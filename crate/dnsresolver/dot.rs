@@ -49,7 +49,9 @@ impl DnsDotResolver {
         let mut remote_tls_conf =
             ClientConfig::builder()
                 .with_safe_defaults()
-                .with_custom_certificate_verifier(Arc::new(NoCertVerifier {})) // @HACK
+                // @HACK: don't check the certificate subject alt name due to
+                //        the lack of ability to check a IP address as a subject alt name
+                .with_custom_certificate_verifier(Arc::new(NoCertVerifier {}))
                 .with_no_client_auth();
         remote_tls_conf.enable_sni = false;
         let tls = ClientConnection::new(
@@ -213,8 +215,12 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                             .push(buffer[tail_size..plaintext_read_size].to_vec());
                     }
 
-                    // TODO: @HACK
-                    let response_msg = &prof.received_dns_messages.last().unwrap()[2..];
+                    let response_bytes = prof.received_dns_messages.last();
+                    if response_bytes.is_none() {
+                        println!("DnsDotResolver # no response data");
+                        return;
+                    }
+                    let response_msg = &response_bytes.unwrap()[2..];
                     match parse_dns_response_message(response_msg) {
                         Ok(maybe_addr) => {
                             self.callback.dns_resolve_ready(maybe_addr, event_loop);

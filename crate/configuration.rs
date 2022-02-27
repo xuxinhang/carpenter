@@ -1,22 +1,19 @@
 use std::fs;
 use std::io;
 use std::io::{BufRead, BufReader};
-use crate::uri_match::HostMatchTree;
+use crate::uri_match::{HostMatchTree, HostnameMatchTree};
 
-#[derive(Clone)]
-pub enum TransformerConfig {
-    SniTransformer(String),
-    DirectTransformer,
-}
 
 pub struct GlobalConfiguration {
     pub tls_cert: Vec<rustls::Certificate>,
     pub tls_pkey: rustls::PrivateKey,
     pub openssl_path: String,
-    pub transformer_host_matcher: HostMatchTree<TransformerConfig>,
+    pub transformer_host_matcher: HostMatchTree<TransformerAction>,
+    pub querier_matcher: HostnameMatchTree<QuerierAction>,
 }
 
 pub fn load_default_configuration() -> GlobalConfiguration {
+    // load certification file
     let certname = "./certs/default_crt.crt";
     let certfile = fs::File::open(certname).expect("cannot open certificate file");
     let certdata = rustls_pemfile::certs(&mut BufReader::new(certfile))
@@ -25,6 +22,7 @@ pub fn load_default_configuration() -> GlobalConfiguration {
         .map(|v| rustls::Certificate(v.clone()))
         .collect();
 
+    // load private key file
     let pkeyname = "./certs/default_key.pem";
     let pkeyfile = fs::File::open(pkeyname).expect("cannot open private key file");
     let mut pkeyreader = BufReader::new(pkeyfile);
@@ -38,11 +36,13 @@ pub fn load_default_configuration() -> GlobalConfiguration {
         }
     };
 
+    // construct global configuration structure
     GlobalConfiguration {
         tls_cert: certdata,
         tls_pkey: pkeydata,
         openssl_path: String::from("C:\\Program Files\\Git\\usr\\bin\\openssl.exe"),
         transformer_host_matcher: load_transformer_matcher(),
+        querier_matcher: load_querier_matcher(),
     }
 }
 
@@ -76,12 +76,31 @@ pub fn load_tls_private_key(file_path: &str) -> io::Result<rustls::PrivateKey> {
 }
 
 
-#[derive(serde_derive::Deserialize)]
-struct TransformerMatcherConfigFileFormat {
-    _rules: toml::map::Map<String, toml::Value>,
+/**
+ * Transformer config
+ * Use different transformers for different domains
+ */
+
+fn is_matcher_config_file_line_valid(s: &str) -> bool {
+    let s = s.trim_start();
+    // ignore blank line
+    if s.is_empty() {
+        return false;
+    }
+    // ignore comment line
+    if s.starts_with('#') {
+        return false;
+    }
+    true
 }
 
-fn load_transformer_matcher() -> HostMatchTree<TransformerConfig> {
+#[derive(Clone)]
+pub enum TransformerAction {
+    SniTransformer(String),
+    DirectTransformer,
+}
+
+fn load_transformer_matcher() -> HostMatchTree<TransformerAction> {
     let file_name = "./config/transformer_matcher.txt";
     let reader = BufReader::new(fs::File::open(file_name).unwrap());
 
@@ -89,9 +108,10 @@ fn load_transformer_matcher() -> HostMatchTree<TransformerConfig> {
 
     for line in reader.lines() {
         let line = line.unwrap();
-        if line.is_empty() || line.starts_with('#') {
+        if !is_matcher_config_file_line_valid(&line) {
             continue;
         }
+
         let (host_str, prof_str) = line.split_once('+').unwrap();
         let host_str = String::from(host_str.trim());
         let mut prof_str = String::from(prof_str.trim());
@@ -102,16 +122,50 @@ fn load_transformer_matcher() -> HostMatchTree<TransformerConfig> {
         let hostname = hostname.trim();
         let (tf_type, tf_param) = prof_str.split_once(' ').unwrap();
         let prof = match tf_type {
-            "sni" => TransformerConfig::SniTransformer(tf_param.trim().to_string()),
-            _ => TransformerConfig::DirectTransformer,
+            "sni" => TransformerAction::SniTransformer(tf_param.trim().to_string()),
+            _ => TransformerAction::DirectTransformer,
         };
 
         tree.insert(port, hostname, prof);
     }
 
-    match tree.get(443, "mil.sina.cn") {
-        Some(TransformerConfig::SniTransformer(s)) => println!("{}", s),
-        _ => {}
+    tree
+}
+
+
+#[derive(Clone)]
+pub enum QuerierAction {
+    To(String),
+    Dns(String),
+}
+
+fn load_querier_matcher() -> HostnameMatchTree<QuerierAction> {
+    let file_name = "./config/querier_matcher.txt";
+    let reader = BufReader::new(fs::File::open(file_name).unwrap());
+
+    let mut tree = HostnameMatchTree::new();
+
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if !is_matcher_config_file_line_valid(&line) {
+            continue;
+        }
+
+        let (pattern_str, action_str) = line.split_once('+').unwrap();
+        let hostname_str = pattern_str.trim();
+        let (action_type_str, action_param_str) =
+            action_str.split_once(' ').unwrap_or((action_str, ""));
+        let action_param_str = action_param_str.trim_start();
+
+        let action = match action_type_str {
+            "dns" => QuerierAction::Dns(action_param_str.to_string()),
+            "to" => QuerierAction::To(action_param_str.to_string()),
+            _ => {
+                panic!("Unknown querier pattern.");
+            }
+        };
+
+        tree.insert(hostname_str, action);
     }
 
     tree

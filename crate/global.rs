@@ -1,9 +1,9 @@
 use std::cell::RefCell;
-use crate::uri_match::DomainNameMatchTree;
+use crate::uri_match::HostnameMatchTree;
 
 
 pub struct GlobalStuff {
-    pub dns_cache: DomainNameMatchTree<std::net::IpAddr>,
+    pub dns_cache: HostnameMatchTree<std::net::IpAddr>,
     pub cnt: usize,
 }
 
@@ -13,7 +13,7 @@ static mut glb_stuff_ptr: *mut RefCell<GlobalStuff> = 0 as *mut _;
 
 pub fn init_global_stuff() {
     let bb = Box::new(RefCell::new(GlobalStuff {
-        dns_cache: DomainNameMatchTree::new(),
+        dns_cache: HostnameMatchTree::new(),
         cnt: 0,
     }));
     unsafe {

@@ -1,0 +1,11 @@
+* +dns dou
+*.sina.cn +dns dot
+
+*.wikipedia.org +to 208.80.153.224
+*.wiki*.org +to wikipedia.org
+
+*.live.com +dns dot
+*.office.net +dns dot
+*.onedrive.com +dns dot
+
+

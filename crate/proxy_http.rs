@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::io;
 use std::io::{Read, Write};
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::http_header_parser::parse_http_header;
 use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer, TunnelDirectTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
-use crate::configuration::{GlobalConfiguration, TransformerConfig};
+use crate::configuration::{GlobalConfiguration, TransformerAction, QuerierAction};
 use crate::dnsresolver::{DnsResolveCallback, DnsDotResolver, DnsDouResolver};
 
 
@@ -217,20 +218,57 @@ impl EventHandler for ProxyRequestHandler {
                 remote_hostname: request_hostname.to_string(),
                 remote_port: request_port,
             });
-            match fetch_dns_record_from_global_dns_cache(request_hostname) {
-                Some(addr) => {
-                    println!("DNS Result : {} {} (cache)", request_hostname, addr);
-                    query_ready_callback.do_work(Some(addr), event_loop);
-                }
-                None => {
-                    let dns_query_token = Token(query_ready_callback.client.token.0 + 7);
-                    // let dns_server_socker_addr = "223.5.5.5:853".to_socket_addrs().unwrap().next().unwrap();
-                    // let resolver = DnsDotResolver::new(dns_server_socker_addr);
-                    // resolver.query(request_hostname, query_ready_callback, dns_query_token, event_loop);
-                    // ??
-                    let dns_server_socker_addr = "223.5.5.5:53".to_socket_addrs().unwrap().next().unwrap();
-                    let resolver = DnsDouResolver::new(dns_server_socker_addr);
-                    resolver.query(request_hostname, query_ready_callback, dns_query_token, event_loop);
+            if let Some(addr) = fetch_dns_record_from_global_dns_cache(request_hostname) {
+                println!("Querier cache {} => {}", request_hostname, addr);
+                query_ready_callback.do_work(Some(addr), event_loop);
+            } else {
+                let mut target_hostname = request_hostname.to_string();
+                let mut target_step_count = 0;
+                loop {
+                    match self.global_configuration.querier_matcher.get(&target_hostname) {
+                        Some(QuerierAction::To(t)) => {
+                            println!("Querier re-target to {}", t);
+                            target_hostname = t.to_string();
+                            if target_step_count > 100 {
+                                println!("ProxyRequestHandler # too many re-targetting");
+                                return;
+                            }
+                            target_step_count += 1;
+                            continue;
+                        }
+                        Some(QuerierAction::Dns(d)) => {
+                            // use IP address direcly if given
+                            if let Ok(ip_addr) = IpAddr::from_str(&target_hostname) {
+                                println!("Querier IP {}", ip_addr);
+                                query_ready_callback.do_work(Some(ip_addr), event_loop);
+                            } else {
+                                let dns_query_token = Token(query_ready_callback.client.token.0 + 7);
+                                match d.as_str() {
+                                    "dot" => {
+                                        println!("Querier DoT-ask {}", target_hostname);
+                                        let dns_server_socker_addr = "101.101.101.101:853".to_socket_addrs().unwrap().next().unwrap();
+                                        let resolver = DnsDotResolver::new(dns_server_socker_addr);
+                                        resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
+                                    }
+                                    "dou" => {
+                                        println!("Querier DoU-ask {}", target_hostname);
+                                        let dns_server_socker_addr = "223.5.5.5:53".to_socket_addrs().unwrap().next().unwrap();
+                                        let resolver = DnsDouResolver::new(dns_server_socker_addr);
+                                        resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
+                                    }
+                                    _ => {
+                                        println!("ProxyRequestHandler # Unknown DNS server name.");
+                                        return;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                        None => {
+                            println!("ProxyRequestHandler # cannot find querier.");
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -252,7 +290,7 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
             return;
         }
         let addr = addr.unwrap();
-        println!("DNS Result : {} {} (new)", self.remote_hostname, addr);
+        println!("Querier DNS result {} => {}", self.remote_hostname, addr);
         store_dns_record_into_global_dns_cache(&self.remote_hostname, addr.clone());
         self.do_work(Some(addr), event_loop);
     }
@@ -273,36 +311,30 @@ impl ProxyQueryDoneCallback {
             self.global_configuration.transformer_host_matcher.get(
                 request_port, request_hostname);
         let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
-            Some(TransformerConfig::SniTransformer(s)) => {
+            Some(TransformerAction::SniTransformer(s)) => {
                 let (sni_enable, sni_value) = match s.as_str() {
                     "_" => (false, request_hostname),
                     "*" => (true, request_hostname),
                     h => (true, h),
                 };
-                println!("Use TunnelSni {} {}", sni_enable, sni_value);
-                Box::new(TunnelSniomitTransformer::new(
+                println!("Transformer TunnelSni {}", if sni_enable { sni_value } else { "no-sni" });
+                let transformer = TunnelSniomitTransformer::new(
                     self.global_configuration.clone(),
                     request_hostname,
                     sni_value,
                     sni_enable,
-                ).unwrap()) // TODO
+                );
+                if let Err(e) = transformer {
+                    println!("ProxyQueryDoneCallback # TunnelSniomitTransformer::new {:?}", e);
+                    return;
+                }
+                Box::new(transformer.unwrap())
             }
-            Some(TransformerConfig::DirectTransformer) | None => {
-                println!("Use Direct");
+            Some(TransformerAction::DirectTransformer) | None => {
+                println!("Transformer Direct");
                 Box::new(TunnelDirectTransformer::new())
             }
         };
-        /* let transformer_boxed: Box<dyn TunnelTransformer> =
-        if request_hostname.find("12306.cn").is_some() {
-            Box::new(TunnelDirectTransformer::new())
-        } else {
-            Box::new(TunnelSniomitTransformer::new(
-                self.global_configuration.clone(),
-                request_hostname,
-                request_hostname,
-                request_hostname.find("zhi").is_some(),
-            ).unwrap())
-        }; */
 
         // 2) Establish outbound data tunnel.
         let mut socket_addr = (addr, self.remote_port).to_socket_addrs().unwrap();
