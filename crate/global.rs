@@ -8,6 +8,7 @@ pub struct GlobalStuff {
 }
 
 
+#[allow(non_upper_case_globals)]
 static mut glb_stuff_ptr: *mut RefCell<GlobalStuff> = 0 as *mut _;
 
 

@@ -16,15 +16,24 @@ use configuration::{GlobalConfiguration, load_default_configuration};
 
 
 fn main() {
+    wd_log::log_info_ln!("Hello, mio!");
+
+    // intialize global static variables
     global::init_global_stuff();
     global::get_global_stuff().borrow_mut().cnt = 9;
 
-    wd_log::log_info_ln!("Hello, mio!");
-    wd_log::log_info_ln!("Loading config");
+    // load config from file
+    wd_log::log_info_ln!("Loading config...");
     let conf = Rc::new(load_default_configuration());
 
+    // customize logger
+    wd_log::set_level(wd_log::Level::from(conf.core.log_level));
+
+    // start server and event loop
     let mut el = EventLoop::new(1024).unwrap();
+
     start_proxy_server(&mut el, conf);
+
     match el.start_loop() {
         Ok(()) => {
             println!("Event loop ends.");
@@ -36,28 +45,37 @@ fn main() {
 }
 
 
-fn start_proxy_server(el: &mut EventLoop, global_config: Rc<GlobalConfiguration>) {
-    let http_server_addr = "0.0.0.0:7890";
+fn start_proxy_server(el: &mut EventLoop, global_config: Rc<GlobalConfiguration>) -> usize {
+    let mut listen_count = 0;
 
-    match http_server_addr.parse() {
-        Ok(addr) => {
-            let result = proxy_http::HttpProxyServer::new(addr, global_config);
-            if result.is_ok() {
-                let http_server = result.unwrap();
-                match http_server.initial_register(el) {
-                    Ok(_) => {
-                        wd_log::log_info_ln!("HTTP proxy server started on {}", http_server_addr);
+    if global_config.core.inbound_http_enable {
+        let http_server_addr = &global_config.core.inbound_http_listen; // "0.0.0.0:7890";
+        match http_server_addr.parse() {
+            Ok(addr) => {
+                let result = proxy_http::HttpProxyServer::new(addr, global_config.clone());
+                if result.is_ok() {
+                    let http_server = result.unwrap();
+                    match http_server.initial_register(el) {
+                        Ok(_) => {
+                            wd_log::log_info_ln!("HTTP proxy server started on {}", http_server_addr);
+                            listen_count += 1;
+                        }
+                        Err(e) => {
+                            println!("Http proxy server fail to listen on {} {:?}", http_server_addr, e);
+                        }
                     }
-                    Err(e) => {
-                        println!("Http proxy server fail to listen on {} {:?}", http_server_addr, e);
-                    }
+                } else {
+                    println!("Fail to create http proxy server.");
                 }
-            } else {
-                println!("Fail to create http proxy server.");
+            }
+            Err(e) => {
+                println!("Fail to create http proxy server.\n{:?}", e);
             }
         }
-        Err(e) => {
-            println!("Fail to create http proxy server.\n{:?}", e);
-        }
     }
+
+    if listen_count == 0 {
+        println!("WARNING: NO ANY PROXY SERVER RUNNING!");
+    }
+    listen_count
 }

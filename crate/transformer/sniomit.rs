@@ -106,8 +106,8 @@ impl TunnelSniomitTransformer {
             }
         };
 
-        let local_tls_certificate_data = crate::configuration::load_tls_certificate(&crt_file)?;
-        let local_tls_private_key_data = crate::configuration::load_tls_private_key(&key_file)?;
+        let local_tls_certificate_data = crate::common::load_tls_certificate(&crt_file)?;
+        let local_tls_private_key_data = crate::common::load_tls_private_key(&key_file)?;
 
         let local_tls_conf = Arc::new(
             ServerConfig::builder()

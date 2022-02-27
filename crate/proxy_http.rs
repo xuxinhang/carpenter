@@ -308,7 +308,7 @@ impl ProxyQueryDoneCallback {
         let request_hostname = self.remote_hostname.as_str();
         let request_port = self.remote_port;
         let transformer_config =
-            self.global_configuration.transformer_host_matcher.get(
+            self.global_configuration.transformer_matcher.get(
                 request_port, request_hostname);
         let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
             Some(TransformerAction::SniTransformer(s)) => {
