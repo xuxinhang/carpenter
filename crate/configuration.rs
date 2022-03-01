@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use crate::uri_match::{HostMatchTree, HostnameMatchTree};
 
@@ -179,7 +179,7 @@ pub struct CoreConfig {
     pub log_level: u8,
     pub dns_cache_expiration: u32,
     pub dns_load_local_host_file: bool,
-    pub dns_server: HashMap<String, (DnsServerProtocol, IpAddr)>,
+    pub dns_server: HashMap<String, (DnsServerProtocol, SocketAddr)>,
 }
 
 fn parse_core_config(cfg_str: &str) -> CoreConfig {
@@ -241,12 +241,18 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
                         continue;
                     }
                 };
-                let addr = IpAddr::from_str(addr_str);
-                if addr.is_err() {
-                    println!("Dns server address can only be IP address");
-                    continue;
-                }
-                let addr = addr.unwrap();
+                let addr = if let Some((host_str, port_str)) = addr_str.split_once(':') {
+                    let host = IpAddr::from_str(host_str).unwrap();
+                    let port: u16 = port_str.parse().unwrap();
+                    SocketAddr::new(host, port)
+                } else {
+                    let host = IpAddr::from_str(addr_str).unwrap();
+                    let port = match prot {
+                        DnsServerProtocol::Udp => 53,
+                        DnsServerProtocol::Tls => 853,
+                    };
+                    SocketAddr::new(host, port)
+                };
                 dns_server_map.insert(String::from(n), (prot, addr));
             }
         }

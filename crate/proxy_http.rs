@@ -11,7 +11,7 @@ use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::http_header_parser::parse_http_header;
 use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer, TunnelDirectTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
-use crate::configuration::{GlobalConfiguration, TransformerAction, QuerierAction};
+use crate::configuration::{GlobalConfiguration, TransformerAction, QuerierAction, DnsServerProtocol};
 use crate::dnsresolver::{DnsResolveCallback, DnsDotResolver, DnsDouResolver};
 
 
@@ -237,35 +237,37 @@ impl EventHandler for ProxyRequestHandler {
                             continue;
                         }
                         Some(QuerierAction::Dns(d)) => {
-                            // use IP address direcly if given
                             if let Ok(ip_addr) = IpAddr::from_str(&target_hostname) {
+                                // use IP address direcly if given
                                 println!("Querier IP {}", ip_addr);
                                 query_ready_callback.do_work(Some(ip_addr), event_loop);
                             } else {
                                 let dns_query_token = Token(query_ready_callback.client.token.0 + 7);
-                                match d.as_str() {
-                                    "dot" => {
-                                        println!("Querier DoT-ask {}", target_hostname);
-                                        let dns_server_socker_addr = "101.101.101.101:853".to_socket_addrs().unwrap().next().unwrap();
-                                        let resolver = DnsDotResolver::new(dns_server_socker_addr);
-                                        resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
-                                    }
-                                    "dou" => {
-                                        println!("Querier DoU-ask {}", target_hostname);
-                                        let dns_server_socker_addr = "223.5.5.5:53".to_socket_addrs().unwrap().next().unwrap();
-                                        let resolver = DnsDouResolver::new(dns_server_socker_addr);
-                                        resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
-                                    }
-                                    _ => {
-                                        println!("ProxyRequestHandler # Unknown DNS server name.");
+                                match crate::global::get_global_config().core.dns_server.get(&d) {
+                                    None => {
+                                        println!("ProxyRequestHandler # cannot find the assigned querier server.");
                                         return;
+                                    }
+                                    Some((dns_server_protocol, dns_server_addr)) => {
+                                        match dns_server_protocol {
+                                            DnsServerProtocol::Tls => {
+                                                println!("Querier Tls-ask {}", target_hostname);
+                                                let resolver = DnsDotResolver::new(*dns_server_addr);
+                                                resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
+                                            }
+                                            DnsServerProtocol::Udp => {
+                                                println!("Querier Udp-ask {}", target_hostname);
+                                                let resolver = DnsDouResolver::new(*dns_server_addr);
+                                                resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
+                                            }
+                                        }
                                     }
                                 }
                             }
                             break;
                         }
                         None => {
-                            println!("ProxyRequestHandler # cannot find querier.");
+                            println!("ProxyRequestHandler # cannot find a querier action.");
                             return;
                         }
                     }

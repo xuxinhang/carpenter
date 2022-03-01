@@ -11,5 +11,5 @@ cache-expiration = 7200
 load-local-host-file = true
 
 [dns-server]
-normal = "udp://233.5.5.5"
+normal = "udp://223.5.5.5"
 secure = "tls://101.101.101.101"
