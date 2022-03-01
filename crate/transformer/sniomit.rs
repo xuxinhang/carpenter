@@ -48,6 +48,7 @@ impl TunnelSniomitTransformer {
         enable_sni: bool,
     ) -> io::Result<Self> {
         let global_config = crate::global::get_global_config();
+        let openssl_path = global_config.core.env_openssl_path.clone();
 
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(
@@ -81,14 +82,14 @@ impl TunnelSniomitTransformer {
 
                 if !std::path::Path::new(&crt_file_name).exists() {
                     wd_log::log_info_ln!("Creating TLS certificate ({})...", domain_name);
-                    std::process::Command::new(&global_config.openssl_path)
+                    std::process::Command::new(&openssl_path)
                         .args([
                             "req", "-new", "-key", &key_file_name,
                             "-out", &csr_file_name,
                             "-subj", &format!("//X=1/CN={}", domain_name),
                         ])
                         .output()?;
-                    std::process::Command::new(&global_config.openssl_path)
+                    std::process::Command::new(&openssl_path)
                         .args([
                             "x509", "-req",
                             "-in", &csr_file_name,

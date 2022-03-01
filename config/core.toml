@@ -1,3 +1,6 @@
+[env]
+openssl_path = "C:\\Program Files\\Git\\usr\\bin\\openssl.exe"
+
 [inbound-http]
 enable = true
 listen = "0.0.0.0:7890"

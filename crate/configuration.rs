@@ -9,7 +9,6 @@ use crate::uri_match::{HostMatchTree, HostnameMatchTree};
 pub struct GlobalConfiguration {
     pub tls_cert: Vec<rustls::Certificate>,
     pub tls_pkey: rustls::PrivateKey,
-    pub openssl_path: String,
     pub transformer_matcher: HostMatchTree<TransformerAction>,
     pub querier_matcher: HostnameMatchTree<QuerierAction>,
     pub core: CoreConfig,
@@ -72,7 +71,6 @@ pub fn load_default_configuration() -> GlobalConfiguration {
     GlobalConfiguration {
         tls_cert: certdata,
         tls_pkey: pkeydata,
-        openssl_path: String::from("C:\\Program Files\\Git\\usr\\bin\\openssl.exe"),
         transformer_matcher: transformer_matcher,
         querier_matcher: querier_matcher,
         core: core_cfg,
@@ -183,6 +181,7 @@ pub enum DnsServerProtocol {
 
 #[derive(Debug)]
 pub struct CoreConfig {
+    pub env_openssl_path: String,
     pub inbound_http_enable: bool,
     pub inbound_http_listen: String,
     pub log_level: u8,
@@ -193,6 +192,7 @@ pub struct CoreConfig {
 
 fn parse_core_config(cfg_str: &str) -> CoreConfig {
     let mut cfg = CoreConfig {
+        env_openssl_path: String::from("openssl"),
         inbound_http_enable: false,
         inbound_http_listen: String::new(),
         log_level: 5,
@@ -209,6 +209,13 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
     }
     let toml_root = toml_root.unwrap();
     let toml_root = toml_root.as_table().unwrap();
+
+    if let Some(t) = toml_root.get("env").map(|x| x.as_table()).flatten() {
+        cfg.env_openssl_path = t.get("openssl_path").map(|x| x.as_str()).flatten()
+            .unwrap_or("openssl").to_string();
+    } else {
+        cfg.env_openssl_path = String::from("openssl");
+    }
 
     if let Some(t) = toml_root.get("inbound-http") {
         let t = t.as_table().expect("inbound_http should be a table");
