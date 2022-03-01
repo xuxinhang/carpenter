@@ -1,9 +1,7 @@
 use std::io;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use std::rc::Rc;
 use crate::transformer::{TunnelTransformer, TransferResult};
-use crate::configuration::GlobalConfiguration;
 use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
 
 const MAX_BUFFER_UINT_SIZE: usize = 4*1024*1024;
@@ -34,7 +32,6 @@ impl std::str::FromStr for ServerName {
 
 
 pub struct TunnelSniomitTransformer {
-    _global_configuration: Rc<GlobalConfiguration>,
     local_tls: ServerConnection,
     remote_tls: ClientConnection,
     transmit_plaintext_buffer: Vec<Vec<u8>>,
@@ -46,11 +43,12 @@ pub struct TunnelSniomitTransformer {
 
 impl TunnelSniomitTransformer {
     pub fn new(
-        global_configuration: Rc<GlobalConfiguration>,
         server_str: &str,
         sni_str: &str,
         enable_sni: bool,
     ) -> io::Result<Self> {
+        let global_config = crate::global::get_global_config();
+
         let mut root_store = rustls::RootCertStore::empty();
         root_store.add_server_trust_anchors(
             webpki_roots::TLS_SERVER_ROOTS
@@ -83,14 +81,14 @@ impl TunnelSniomitTransformer {
 
                 if !std::path::Path::new(&crt_file_name).exists() {
                     wd_log::log_info_ln!("Creating TLS certificate ({})...", domain_name);
-                    std::process::Command::new(&global_configuration.openssl_path)
+                    std::process::Command::new(&global_config.openssl_path)
                         .args([
                             "req", "-new", "-key", &key_file_name,
                             "-out", &csr_file_name,
                             "-subj", &format!("//X=1/CN={}", domain_name),
                         ])
                         .output()?;
-                    std::process::Command::new(&global_configuration.openssl_path)
+                    std::process::Command::new(&global_config.openssl_path)
                         .args([
                             "x509", "-req",
                             "-in", &csr_file_name,
@@ -137,7 +135,6 @@ impl TunnelSniomitTransformer {
                     server_str.try_into().unwrap_or("localhost".try_into().unwrap()),
                 ),
             ).unwrap(),
-            _global_configuration: global_configuration,
             transmit_plaintext_buffer: Vec::new(),
             receive_plaintext_buffer: Vec::new(),
             _transmit_tls_will_close: false,

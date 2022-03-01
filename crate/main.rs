@@ -12,7 +12,6 @@ pub mod global;
 
 use event_loop::EventLoop;
 use std::rc::Rc;
-use configuration::{GlobalConfiguration, load_default_configuration};
 
 
 fn main() {
@@ -23,7 +22,7 @@ fn main() {
 
     // load config from file
     wd_log::log_info_ln!("Loading config...");
-    let conf = Rc::new(load_default_configuration());
+    let conf = Rc::new(configuration::load_default_configuration());
     global::publish_global_config(conf.clone());
 
     // customize logger
@@ -32,7 +31,7 @@ fn main() {
     // start server and event loop
     let mut el = EventLoop::new(1024).unwrap();
 
-    start_proxy_server(&mut el, conf);
+    start_proxy_server(&mut el);
 
     match el.start_loop() {
         Ok(()) => {
@@ -45,14 +44,15 @@ fn main() {
 }
 
 
-fn start_proxy_server(el: &mut EventLoop, global_config: Rc<GlobalConfiguration>) -> usize {
+fn start_proxy_server(el: &mut EventLoop) -> usize {
     let mut listen_count = 0;
+    let global_config = crate::global::get_global_config();
 
     if global_config.core.inbound_http_enable {
         let http_server_addr = &global_config.core.inbound_http_listen; // "0.0.0.0:7890";
         match http_server_addr.parse() {
             Ok(addr) => {
-                let result = proxy_http::HttpProxyServer::new(addr, global_config.clone());
+                let result = proxy_http::HttpProxyServer::new(addr);
                 if result.is_ok() {
                     let http_server = result.unwrap();
                     match http_server.initial_register(el) {

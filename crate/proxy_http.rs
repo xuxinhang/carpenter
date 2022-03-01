@@ -11,7 +11,7 @@ use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::http_header_parser::parse_http_header;
 use crate::transformer::{TransferResult, TunnelTransformer, TunnelSniomitTransformer, TunnelDirectTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
-use crate::configuration::{GlobalConfiguration, TransformerAction, QuerierAction, DnsServerProtocol};
+use crate::configuration::{TransformerAction, QuerierAction, DnsServerProtocol};
 use crate::dnsresolver::{DnsResolveCallback, DnsDotResolver, DnsDouResolver};
 
 
@@ -45,14 +45,10 @@ pub struct HttpProxyServer {
     listener: TcpListener,
     token: Token,
     counter: IncrementalCounter,
-    global_configuration: Rc<GlobalConfiguration>,
 }
 
 impl HttpProxyServer {
-    pub fn new(
-        address: SocketAddr,
-        global_configuration: Rc<GlobalConfiguration>,
-    ) -> io::Result<Self> {
+    pub fn new(address: SocketAddr) -> io::Result<Self> {
         let result = TcpListener::bind(address);
         if result.is_err() {
             return Err(result.unwrap_err());
@@ -63,7 +59,6 @@ impl HttpProxyServer {
             listener,
             token: Token(17),
             counter: IncrementalCounter::new(),
-            global_configuration,
         })
     }
 
@@ -86,7 +81,6 @@ impl EventHandler for HttpProxyServer {
             Ok((conn, _address)) => {
                 let token_id = self.as_mut().counter.get();
                 let client = ProxyRequestHandler {
-                    global_configuration: self.global_configuration.clone(),
                     client: ClientShakingConnection::from_connection(Token(token_id + 1), conn),
                 };
                 if let Err(e) = event_loop.register(Box::new(client)) {
@@ -161,7 +155,6 @@ impl Tunnel {
 
 
 struct ProxyRequestHandler {
-    global_configuration: Rc<GlobalConfiguration>,
     client: ClientShakingConnection,
 }
 
@@ -171,6 +164,8 @@ impl EventHandler for ProxyRequestHandler {
     }
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
+        let global_config = crate::global::get_global_config();
+
         if event.is_readable() {
             let conn = &mut self.client.client_conn;
 
@@ -213,7 +208,6 @@ impl EventHandler for ProxyRequestHandler {
 
             // 1) DNS resolve
             let query_ready_callback = Box::new(ProxyQueryDoneCallback {
-                global_configuration: self.global_configuration.clone(),
                 client: self.client,
                 remote_hostname: request_hostname.to_string(),
                 remote_port: request_port,
@@ -225,7 +219,7 @@ impl EventHandler for ProxyRequestHandler {
                 let mut target_hostname = request_hostname.to_string();
                 let mut target_step_count = 0;
                 loop {
-                    match self.global_configuration.querier_matcher.get(&target_hostname) {
+                    match global_config.querier_matcher.get(&target_hostname) {
                         Some(QuerierAction::To(t)) => {
                             println!("Querier re-target to {}", t);
                             target_hostname = t.to_string();
@@ -279,7 +273,6 @@ impl EventHandler for ProxyRequestHandler {
 
 
 struct ProxyQueryDoneCallback {
-    global_configuration: Rc<GlobalConfiguration>,
     client: ClientShakingConnection,
     remote_hostname: String,
     remote_port: u16,
@@ -300,6 +293,8 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
 
 impl ProxyQueryDoneCallback {
     fn do_work(self: Box<Self>, addr: Option<IpAddr>, event_loop: &mut EventLoop) {
+        let global_config = crate::global::get_global_config();
+
         if addr.is_none() {
             println!("ProxyQueryDoneHandler # Fail to resolve host \"{}\"", self.remote_hostname);
             return;
@@ -310,8 +305,7 @@ impl ProxyQueryDoneCallback {
         let request_hostname = self.remote_hostname.as_str();
         let request_port = self.remote_port;
         let transformer_config =
-            self.global_configuration.transformer_matcher.get(
-                request_port, request_hostname);
+            global_config.transformer_matcher.get(request_port, request_hostname);
         let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
             Some(TransformerAction::SniTransformer(s)) => {
                 let (sni_enable, sni_value) = match s.as_str() {
@@ -321,7 +315,6 @@ impl ProxyQueryDoneCallback {
                 };
                 println!("Transformer TunnelSni {}", if sni_enable { sni_value } else { "no-sni" });
                 let transformer = TunnelSniomitTransformer::new(
-                    self.global_configuration.clone(),
                     request_hostname,
                     sni_value,
                     sni_enable,
@@ -378,7 +371,6 @@ impl ProxyClientReadyCall for ProxyRequestConnectedHandler {
 
 
 struct ProxyResponseHandler {
-    // global_configuration: Rc<GlobalConfiguration>,
     tunnel: Tunnel,
 }
 
