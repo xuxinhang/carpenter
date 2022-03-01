@@ -45,15 +45,28 @@ pub fn load_default_configuration() -> GlobalConfiguration {
     let mut file_string = String::new();
     reader.read_to_string(&mut file_string).unwrap();
     let core_cfg = parse_core_config(&file_string);
-    // println!("## Core config ##\n{:?}", core_cfg);
 
+    // load transformer matcher
     let file_name = "./config/transformer_matcher.txt";
     let reader = BufReader::new(fs::File::open(file_name).unwrap());
     let transformer_matcher = parse_transformer_matcher(reader);
 
+    // load querier matcher
+    let mut tree = HostnameMatchTree::new();
+    if core_cfg.dns_load_local_host_file {
+        if let Some(file_path) = get_hosts_file_path() {
+            let par = HostsFileParser::new(BufReader::new(fs::File::open(file_path).unwrap()));
+            for (ip, domains) in par {
+                for d in domains.iter() {
+                    tree.insert(d, QuerierAction::To(ip.clone()))
+                }
+            }
+        }
+    }
     let file_name = "./config/querier_matcher.txt";
     let reader = BufReader::new(fs::File::open(file_name).unwrap());
-    let querier_matcher = parse_querier_matcher(reader);
+    parse_querier_matcher(&mut tree, reader);
+    let querier_matcher = tree;
 
     // construct global configuration structure
     GlobalConfiguration {
@@ -132,9 +145,7 @@ pub enum QuerierAction {
     Dns(String),
 }
 
-fn parse_querier_matcher(reader: impl BufRead) -> HostnameMatchTree<QuerierAction> {
-    let mut tree = HostnameMatchTree::new();
-
+fn parse_querier_matcher(tree: &mut HostnameMatchTree<QuerierAction>, reader: impl BufRead) {
     for line in reader.lines() {
         let line = line.unwrap();
         if !is_matcher_config_file_line_valid(&line) {
@@ -157,8 +168,6 @@ fn parse_querier_matcher(reader: impl BufRead) -> HostnameMatchTree<QuerierActio
 
         tree.insert(hostname_str, action);
     }
-
-    tree
 }
 
 
@@ -260,6 +269,58 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
     }
 
     cfg
+}
+
+
+fn get_hosts_file_path() -> Option<&'static str> {
+    use std::path::Path;
+    let p = "C:\\WINDOWS\\system32\\drivers\\etc\\hosts";
+    if Path::new(p).exists() {
+        return Some(p);
+    }
+
+    let p = "/etc/hosts";
+    if Path::new(p).exists() {
+        return Some(p);
+    }
+
+    None
+}
+
+struct HostsFileParser<R: BufRead> {
+    buf_lines: std::io::Lines<R>,
+}
+
+impl<R: BufRead> HostsFileParser<R> {
+    fn new(b: R) -> Self {
+        Self { buf_lines: b.lines() }
+    }
+}
+
+impl<R: BufRead> Iterator for HostsFileParser<R> {
+    type Item = (String, Vec<String>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.buf_lines.next() {
+                None => return None,
+                Some(Err(_)) => continue,
+                Some(Ok(s)) => {
+                    let s = s.split_once('#').unwrap_or((&s, "")).0;
+                    let mut substrings = s.split_whitespace().collect::<Vec<&str>>();
+                    if substrings.len() < 2 {
+                        continue;
+                    }
+                    let ip = Some(substrings.remove(0));
+                    // IpAddr::from_str(substrings.remove(0));
+                    return Some((
+                        ip.unwrap().to_string(),
+                        substrings.iter().map(|x| x.to_string()).collect(),
+                    ));
+                }
+            }
+        }
+    }
 }
 
 
