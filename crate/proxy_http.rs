@@ -33,7 +33,7 @@ impl IncrementalCounter {
 
 
 fn store_dns_record_into_global_dns_cache(domain: &str, ip: IpAddr) {
-   crate::global::get_global_stuff().borrow_mut().dns_cache.insert(domain, ip);
+   crate::global::get_global_stuff().borrow_mut().dns_cache.store(domain, ip);
 }
 
 fn fetch_dns_record_from_global_dns_cache(domain: &str) -> Option<IpAddr> {

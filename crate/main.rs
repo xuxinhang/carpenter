@@ -20,11 +20,11 @@ fn main() {
 
     // intialize global static variables
     global::init_global_stuff();
-    global::get_global_stuff().borrow_mut().cnt = 9;
 
     // load config from file
     wd_log::log_info_ln!("Loading config...");
     let conf = Rc::new(load_default_configuration());
+    global::publish_global_config(conf.clone());
 
     // customize logger
     wd_log::set_level(wd_log::Level::from(conf.core.log_level));
