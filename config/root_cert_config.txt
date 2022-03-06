@@ -1,0 +1,23 @@
+[req]
+prompt                  = no
+encrypt_key             = no
+distinguished_name      = req_distinguished_name
+# req_extensions        = req_extensions
+x509_extensions         = x509_extensions
+
+[req_distinguished_name]
+C  = CN
+ST = CQ
+L  = CQ
+O  = _Carpenter
+OU = _Carpenter
+CN = localhost
+
+[req_extensions]
+basicConstraints        = CA:TRUE
+keyUsage                = critical,digitalSignature,keyCertSign,cRLSign,keyEncipherment
+extendedKeyUsage        = critical,serverAuth,clientAuth
+
+[x509_extensions]
+basicConstraints        = critical, CA:true, pathlen:0
+keyUsage                = critical, digitalSignature, keyCertSign

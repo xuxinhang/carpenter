@@ -2,6 +2,7 @@
 /target
 
 /certs
+/_certs
 /assets
 /tls_certs/*.txt
 *.pem

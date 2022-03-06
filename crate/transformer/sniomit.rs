@@ -76,16 +76,16 @@ impl TunnelSniomitTransformer {
             }
             ServerName::Domain(domain) => {
                 let domain_name = domain;
-                let crt_file_name = format!("tls_certs/tls_domain__{}__crt.crt", domain_name);
-                let csr_file_name = format!("tls_certs/tls_domain__{}__csr.pem", domain_name);
-                let key_file_name = String::from("certs/tls_default_key.pem");
+                let crt_file_name = format!("_certs/issued/tls_domain__{}__crt.crt", domain_name);
+                let csr_file_name = format!("_certs/issued/tls_domain__{}__csr.pem", domain_name);
+                let key_file_name = String::from("_certs/root.key.pem");
 
                 if !std::path::Path::new(&crt_file_name).exists() {
                     wd_log::log_info_ln!("Creating TLS certificate ({})...", domain_name);
                     std::process::Command::new(&openssl_path)
                         .args([
-                            "req", "-new", "-key", &key_file_name,
-                            "-out", &csr_file_name,
+                            "req", "-new", "-out", &csr_file_name,
+                            "-key", &key_file_name,
                             "-subj", &format!("//X=1/CN={}", domain_name),
                         ])
                         .output()?;
@@ -93,10 +93,11 @@ impl TunnelSniomitTransformer {
                         .args([
                             "x509", "-req",
                             "-in", &csr_file_name,
-                            "-CA", "certs/root_crt.pem",
-                            "-CAkey",  "certs/root_key.pem",
+                            "-days", "36500",
+                            "-CA", "_certs/root.crt.crt",
+                            "-CAkey",  "_certs/root.key.pem",
                             "-out", &crt_file_name,
-                            "-CAcreateserial",
+                            // "-CAcreateserial",
                         ])
                         .output()?;
                     std::fs::remove_file(csr_file_name)?;
@@ -113,8 +114,8 @@ impl TunnelSniomitTransformer {
                 .with_safe_defaults()
                 .with_no_client_auth()
                 .with_single_cert(
-                    local_tls_certificate_data, // global_configuration.tls_cert.clone(),
-                    local_tls_private_key_data, // global_configuration.tls_pkey.clone(),
+                    local_tls_certificate_data,
+                    local_tls_private_key_data,
                 )
                 .expect("bad local_tls_conf")
         );

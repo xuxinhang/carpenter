@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::io::{BufRead, BufReader, Read};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -6,38 +7,14 @@ use std::str::FromStr;
 use crate::uri_match::{HostMatchTree, HostnameMatchTree};
 
 
+/* System initialize */
 pub struct GlobalConfiguration {
-    pub tls_cert: Vec<rustls::Certificate>,
-    pub tls_pkey: rustls::PrivateKey,
     pub transformer_matcher: HostMatchTree<TransformerAction>,
     pub querier_matcher: HostnameMatchTree<QuerierAction>,
     pub core: CoreConfig,
 }
 
 pub fn load_default_configuration() -> GlobalConfiguration {
-    // load certification file
-    let certname = "./certs/default_crt.crt";
-    let certfile = fs::File::open(certname).expect("cannot open certificate file");
-    let certdata = rustls_pemfile::certs(&mut BufReader::new(certfile))
-        .unwrap()
-        .iter()
-        .map(|v| rustls::Certificate(v.clone()))
-        .collect();
-
-    // load private key file
-    let pkeyname = "./certs/default_key.pem";
-    let pkeyfile = fs::File::open(pkeyname).expect("cannot open private key file");
-    let mut pkeyreader = BufReader::new(pkeyfile);
-    let pkeydata = loop {
-        match rustls_pemfile::read_one(&mut pkeyreader)
-            .expect("cannot parse private key .pem file") {
-            Some(rustls_pemfile::Item::RSAKey(key)) => break rustls::PrivateKey(key),
-            Some(rustls_pemfile::Item::PKCS8Key(key)) => break rustls::PrivateKey(key),
-            None => panic!("no keys found in {:?} (encrypted keys not supported)", pkeyname),
-            _ => {}
-        }
-    };
-
     // load core config file
     let file_name = "./config/core.toml";
     let mut reader = BufReader::new(fs::File::open(file_name).unwrap());
@@ -69,8 +46,6 @@ pub fn load_default_configuration() -> GlobalConfiguration {
 
     // construct global configuration structure
     GlobalConfiguration {
-        tls_cert: certdata,
-        tls_pkey: pkeydata,
         transformer_matcher: transformer_matcher,
         querier_matcher: querier_matcher,
         core: core_cfg,
@@ -280,7 +255,6 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
 
 
 fn get_hosts_file_path() -> Option<&'static str> {
-    use std::path::Path;
     let p = "C:\\WINDOWS\\system32\\drivers\\etc\\hosts";
     if Path::new(p).exists() {
         return Some(p);
