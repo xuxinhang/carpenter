@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 
-pub fn parse_http_header(chunk: &[u8]) -> Option<(usize, HashMap<String, String>)> {
+pub fn parse_http_header(chunk: &[u8]) -> Option<(usize, HashMap<String, String>, Vec<String>)> {
     // let consume_string = |bytes: &[u8]| -> (String, &[u8]) {
     fn consume_string(bytes: &[u8]) -> (String, &[u8]) {
         let idx = bytes.iter().position(|x| *x == '\r' as u8 || *x == ' ' as u8)
@@ -26,7 +26,7 @@ pub fn parse_http_header(chunk: &[u8]) -> Option<(usize, HashMap<String, String>
             (String::new(), &bytes[..])
         }
     }
-    // let consume_field_value = |bytes: &[u8]| {
+
     fn consume_field_value(bytes: &[u8]) -> (String, &[u8]) {
         let idx = bytes.iter().position(|x| *x == '\r' as u8)
             .unwrap_or(bytes.len());
@@ -35,16 +35,17 @@ pub fn parse_http_header(chunk: &[u8]) -> Option<(usize, HashMap<String, String>
     }
 
     let s = &chunk[..];
-    let mut headers = HashMap::<String, String>::new();
+    let mut header_map = HashMap::new();
+    let mut header_vec = Vec::new();
 
     let (method, s) = consume_string(s);
-    headers.insert(String::from(":method"), method);
+    header_map.insert(String::from(":method"), method);
     let (_, s) = consume_whitespaces(s);
     let (path, s) = consume_string(s);
-    headers.insert(String::from(":path"), path);
+    header_map.insert(String::from(":path"), path);
     let (_, s) = consume_whitespaces(s);
     let (version, s) = consume_string(s);
-    headers.insert(String::from(":version"), version);
+    header_map.insert(String::from(":version"), version);
     let (_, s) = consume_whitespaces(s);
     let (_, s) = consume_crlf(s);
 
@@ -58,7 +59,8 @@ pub fn parse_http_header(chunk: &[u8]) -> Option<(usize, HashMap<String, String>
         let (_, s) = consume_whitespaces(s);
         let (value, s) = consume_field_value(s);
         let (_, s) = consume_crlf(s);
-        headers.insert(key, value);
+        header_map.insert(key.clone(), value);
+        header_vec.push(key.clone());
 
         if s.starts_with("\r\n".as_bytes()) {
             let (_, s) = consume_crlf(s);
@@ -72,6 +74,6 @@ pub fn parse_http_header(chunk: &[u8]) -> Option<(usize, HashMap<String, String>
         ss = s;
     }
 
-    Some((chunk.len() - ss.len(), headers))
+    Some((chunk.len() - ss.len(), header_map, header_vec))
 }
 

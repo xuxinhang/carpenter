@@ -110,31 +110,23 @@ impl ClientShakingConnection {
     }
 }
 
+struct ClientShakingAgreement {
+    token: Token,
+    client_conn: TcpStream,
+    is_http_tunnel_mode: bool,
+}
+
+
 struct Tunnel {
+    is_http_tunnel_mode: bool,
+    local_token: Token,
     local_conn: TcpStream,
+    remote_token: Token,
     remote_conn: TcpStream,
     transformer: Box<dyn TunnelTransformer>,
-    local_token: Token,
-    remote_token: Token,
 }
 
 impl Tunnel {
-    fn from_connection(
-        local_token: Token,
-        local_conn: TcpStream,
-        remote_token: Token,
-        remote_conn: TcpStream,
-        transformer: Box<dyn TunnelTransformer>,
-    ) -> Self {
-        Self {
-            local_conn,
-            remote_conn,
-            transformer,
-            local_token,
-            remote_token,
-        }
-    }
-
     fn receive_pull(&mut self) -> TransferResult {
         self.transformer.receive_write(&mut self.remote_conn)
     }
@@ -169,54 +161,102 @@ impl EventHandler for ProxyRequestHandler {
         if event.is_readable() {
             let conn = &mut self.client.client_conn;
 
-            let mut buf = vec![0u8; 4*1024*1024];
-            let result = conn.peek(&mut buf);
-            if result.is_err() {
-                println!("ProxyRequestHandler # peek error.");
+            let mut msg_buf = vec![0u8; 4*1024*1024];
+            if let Err(e) = conn.peek(&mut msg_buf) {
+                println!("ProxyRequestHandler # peek error. {:?}", e);
                 return;
             }
 
-            let result = parse_http_header(&buf);
+            let result = parse_http_header(&msg_buf);
             if result.is_none() {
                 wd_log::log_warn_ln!("ProxyRequestHandler # Invalid HTTP message.");
                 return;
             }
-            let (header_length, msg_headers) = result.unwrap();
-            let mut trash = vec![0; header_length];
-            let result = conn.read(&mut trash);
+            let (header_length, msg_header_map, _msg_header_vec) = result.unwrap();
 
-            if result.is_err() {
-                println!("ProxyRequestHandler # read error.");
-                return;
-            }
-
-            let request_host = msg_headers[":path"].clone();
-            let (request_hostname, request_port) = match request_host.rsplit_once(':') {
-                None => {
-                    wd_log::log_warn_ln!("unexpected request host: {}", request_host);
+            let (
+                is_http_tunnel_mode,
+                remote_hostname,
+                remote_port,
+                // early_data,
+            ) = if msg_header_map[":method"].as_str() == "CONNECT" {
+                let request_host = &msg_header_map[":path"];
+                let result = request_host.rsplit_once(':')
+                    .and_then(|x| Some(x.0).zip(x.1.parse().ok()));
+                if result.is_none() {
+                    wd_log::log_warn_ln!("ProxyRequestHandler # invalid request host: {}", request_host);
                     return;
                 }
-                Some((h, p)) => {
-                    let pn: u16 = p.parse().unwrap_or(0);
-                    if pn == 0 {
-                        wd_log::log_warn_ln!("unexpected request host: {}", request_host);
-                        return;
+                let (hostname, port) = result.unwrap();
+
+                // we don't need this header any more
+                let mut trash = vec![0; header_length];
+                if conn.read(&mut trash).is_err() {
+                    println!("ProxyRequestHandler # read error.");
+                    return;
+                }
+
+                (true, hostname, port)
+            } else {
+                // get hostname and port
+                let request_path = &msg_header_map[":path"];
+                let result = request_path.split_once("://");
+                if result.is_none() {
+                    wd_log::log_warn_ln!("unexpected request path: {}", request_path);
+                    return;
+                }
+                let (_protocal_str, authority_and_origin_str) = result.unwrap();
+
+
+                let (authority_str, _origin_str) = authority_and_origin_str.find('/')
+                    .map(|i| authority_and_origin_str.split_at(i))
+                    .unwrap_or((authority_and_origin_str, "/"));
+                let (hostname, port) = match authority_str.rsplit_once(':') {
+                    None => (authority_str, 80),
+                    Some((h, p)) => (h, u16::from_str(p).unwrap()),
+                };
+
+                /*/ rebuilt HTTP/1.1 message (TODO: follow RFC 7230)
+                let mut rebuilt_message = Vec::<u8>::new();
+                rebuilt_message.write(format!(
+                    "{} {} {}\r\n",
+                    msg_header_map[":method"],
+                    if msg_header_map[":method"] == "OPTION" { "*" } else { origin_str },
+                    msg_header_map[":version"],
+                ).as_bytes()).unwrap();
+                for hkey in msg_header_vec.iter() {
+                    let hval = msg_header_map.get(hkey).unwrap();
+                    let hkey_used = match hkey.as_str() {
+                        // "Proxy-Connection" => "Connection",
+                        // "Connection" => "",
+                        s => s,
+                    };
+                    if !hkey_used.is_empty() {
+                        rebuilt_message.write(
+                            format!("{}: {}\r\n", hkey_used, hval).as_bytes()).unwrap();
                     }
-                    (h, pn)
-                },
+                }
+                rebuilt_message.write("\r\n".as_bytes()).unwrap();
+                rebuilt_message.write(&msg_buf[header_length..]).unwrap(); */
+
+                (false, hostname, port)
             };
 
             // 1) DNS resolve
             let query_ready_callback = Box::new(ProxyQueryDoneCallback {
-                client: self.client,
-                remote_hostname: request_hostname.to_string(),
-                remote_port: request_port,
+                client: ClientShakingAgreement {
+                    token: self.client.token,
+                    client_conn: self.client.client_conn,
+                    is_http_tunnel_mode,
+                },
+                remote_hostname: remote_hostname.to_string(),
+                remote_port: remote_port,
             });
-            if let Some(addr) = fetch_dns_record_from_global_dns_cache(request_hostname) {
-                println!("Querier cache {} => {}", request_hostname, addr);
+            if let Some(addr) = fetch_dns_record_from_global_dns_cache(remote_hostname) {
+                println!("Querier cache {} => {}", remote_hostname, addr);
                 query_ready_callback.do_work(Some(addr), event_loop);
             } else {
-                let mut target_hostname = request_hostname.to_string();
+                let mut target_hostname = remote_hostname.to_string();
                 let mut target_step_count = 0;
                 loop {
                     match global_config.querier_matcher.get(&target_hostname) {
@@ -273,7 +313,7 @@ impl EventHandler for ProxyRequestHandler {
 
 
 struct ProxyQueryDoneCallback {
-    client: ClientShakingConnection,
+    client: ClientShakingAgreement,
     remote_hostname: String,
     remote_port: u16,
 }
@@ -351,18 +391,21 @@ impl ProxyQueryDoneCallback {
 
 
 struct ProxyRequestConnectedHandler {
-    client: ClientShakingConnection,
+    client: ClientShakingAgreement,
     transformer: Box<dyn TunnelTransformer>,
 }
 
 impl ProxyClientReadyCall for ProxyRequestConnectedHandler {
     fn proxy_client_ready(self: Box<Self>, event_loop: &mut EventLoop, peer_source: TcpStream) -> io::Result<()> {
         let next_handler = ProxyResponseHandler {
-            tunnel: Tunnel::from_connection(
-                Token(self.client.token.0 + 0), self.client.client_conn,
-                Token(self.client.token.0 + 1), peer_source,
-                self.transformer,
-            ),
+            tunnel: Tunnel {
+                is_http_tunnel_mode: self.client.is_http_tunnel_mode,
+                local_token: Token(self.client.token.0 + 0),
+                local_conn: self.client.client_conn,
+                remote_token: Token(self.client.token.0 + 1),
+                remote_conn: peer_source,
+                transformer: self.transformer,
+            }
         };
         event_loop.reregister(Box::new(next_handler)).unwrap();
         Ok(())
@@ -387,39 +430,30 @@ impl EventHandler for ProxyResponseHandler {
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
         if event.is_writable() {
-            let conn = &mut self.tunnel.local_conn;
-            let message = "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes();
-            match conn.write(message) {
-                Ok(_) => {
-                    let tunnel = self.tunnel;
-                    let tunnel_ptr = Rc::new(RefCell::new(tunnel));
-
-                    if let Err(e) = event_loop.reregister(Box::new(ProxyTransferLocalReadableHandler {
-                        tunnel: tunnel_ptr.clone(),
-                    })) {
-                        println!("ProxyResponseHandler # event_loop.register {:?}", e);
-                    }
-                    if let Err(e) = event_loop.reregister(Box::new(ProxyTransferRemoteReadableHandler {
-                        tunnel: tunnel_ptr.clone(),
-                    })) {
-                        println!("ProxyResponseHandler # event_loop.register {:?}", e);
-                    }
-                    if let Err(e) = event_loop.reregister(Box::new(ProxyTransferLocalWritableHandler {
-                        tunnel: tunnel_ptr.clone(),
-                    })) {
-                        println!("ProxyResponseHandler # event_loop.register {:?}", e);
-                    }
-                    if let Err(e) = event_loop.reregister(Box::new(ProxyTransferRemoteWritableHandler {
-                        tunnel: tunnel_ptr.clone(),
-                    })) {
-                        println!("ProxyResponseHandler # event_loop.register {:?}", e);
-                    }
-                }
-                Err(e) => {
+            // Only HTTP Tunnel needs response with 200
+            if self.tunnel.is_http_tunnel_mode {
+                let message = "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes();
+                let conn = &mut self.tunnel.local_conn;
+                if let Err(e) = conn.write(message) {
                     wd_log::log_warn_ln!("ProxyResponseHandler # fail to write {:?}", e);
                     return;
                 }
             }
+
+            // Both HTTP tunnel and HTTP forward-proxy need to register W/R handlers.
+            let tunnel_ptr = Rc::new(RefCell::new(self.tunnel));
+            event_loop.reregister(Box::new(ProxyTransferLocalReadableHandler {
+                tunnel: tunnel_ptr.clone(),
+            })).unwrap();
+            event_loop.reregister(Box::new(ProxyTransferRemoteReadableHandler {
+                tunnel: tunnel_ptr.clone(),
+            })).unwrap();
+            event_loop.reregister(Box::new(ProxyTransferLocalWritableHandler {
+                tunnel: tunnel_ptr.clone(),
+            })).unwrap();
+            event_loop.reregister(Box::new(ProxyTransferRemoteWritableHandler {
+                tunnel: tunnel_ptr.clone(),
+            })).unwrap();
         }
     }
 }
@@ -483,23 +517,17 @@ impl EventHandler for ProxyTransferLocalReadableHandler {
         }
 
         if reregister_remote_writable_flag {
-            if let Err(e) = event_loop.reregister(Box::new(ProxyTransferRemoteWritableHandler {
+            event_loop.reregister(Box::new(ProxyTransferRemoteWritableHandler {
                 tunnel: Rc::clone(&self.tunnel),
-            })) {
-                println!("ProxyTransferLocalReadableHandler # event_loop.register {:?}", e);
-            }
+            })).unwrap();
         }
         if reregister_local_writable_flag {
-            if let Err(e) = event_loop.reregister(Box::new(ProxyTransferLocalWritableHandler {
+            event_loop.reregister(Box::new(ProxyTransferLocalWritableHandler {
                 tunnel: Rc::clone(&self.tunnel),
-            })) {
-                println!("ProxyTransferLocalReadableHandler # event_loop.register {:?}", e);
-            }
+            })).unwrap();
         }
         if reregister_local_readable_flag {
-            if let Err(e) = event_loop.reregister(self) {
-                println!("ProxyTransferLocalReadableHandler # event_loop.register {:?}", e);
-            }
+            event_loop.reregister(self).unwrap();
         }
     }
 }
@@ -563,23 +591,17 @@ impl EventHandler for ProxyTransferRemoteReadableHandler {
         }
 
         if reregister_local_writable_flag {
-            if let Err(e) = event_loop.reregister(Box::new(ProxyTransferLocalWritableHandler {
+            event_loop.reregister(Box::new(ProxyTransferLocalWritableHandler {
                 tunnel: Rc::clone(&self.tunnel),
-            })) {
-                println!("ProxyTransferRemoteReadableHandler # event_loop.register {:?}" ,e);
-            }
+            })).unwrap()
         }
         if reregister_remote_writable_flag {
-            if let Err(e) = event_loop.reregister(Box::new(ProxyTransferRemoteWritableHandler {
+            event_loop.reregister(Box::new(ProxyTransferRemoteWritableHandler {
                 tunnel: Rc::clone(&self.tunnel),
-            })) {
-                println!("ProxyTransferRemoteReadableHandler # event_loop.register {:?}" ,e);
-            }
+            })).unwrap();
         }
         if reregister_remote_readable_flag {
-            if let Err(e) = event_loop.reregister(self) {
-                println!("ProxyTransferRemoteReadableHandler # event_loop.register {:?}", e);
-            }
+            event_loop.reregister(self).unwrap();
         }
     }
 }
@@ -633,9 +655,7 @@ impl EventHandler for ProxyTransferRemoteWritableHandler {
         }
 
         if reregister_flag {
-            if let Err(e) = event_loop.reregister(self) {
-                println!("ProxyTransferRemoteWritableHandler # event_loop.register {:?}", e);
-            }
+            event_loop.reregister(self).unwrap();
         }
     }
 }
@@ -686,9 +706,7 @@ impl EventHandler for ProxyTransferLocalWritableHandler {
         }
 
         if reregister_flag {
-            if event_loop.reregister(self).is_err() {
-                println!("ProxyTransferLocalWritableHandler # event_loop.register");
-            }
+            event_loop.reregister(self).unwrap();
         }
     }
 }
