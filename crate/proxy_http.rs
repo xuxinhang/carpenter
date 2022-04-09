@@ -163,7 +163,7 @@ impl EventHandler for ProxyRequestHandler {
 
             let mut msg_buf = vec![0u8; 4*1024*1024];
             if let Err(e) = conn.peek(&mut msg_buf) {
-                println!("ProxyRequestHandler # peek error. {:?}", e);
+                wd_log::log_error_ln!("ProxyRequestHandler # peek error. {:?}", e);
                 return;
             }
 
@@ -192,7 +192,7 @@ impl EventHandler for ProxyRequestHandler {
                 // we don't need this header any more
                 let mut trash = vec![0; header_length];
                 if conn.read(&mut trash).is_err() {
-                    println!("ProxyRequestHandler # read error.");
+                    wd_log::log_error_ln!("ProxyRequestHandler # read error.");
                     return;
                 }
 
@@ -253,7 +253,7 @@ impl EventHandler for ProxyRequestHandler {
                 remote_port: remote_port,
             });
             if let Some(addr) = fetch_dns_record_from_global_dns_cache(remote_hostname) {
-                println!("Querier cache {} => {}", remote_hostname, addr);
+                wd_log::log_info_ln!("Querier (cached result) {}", remote_hostname);
                 query_ready_callback.do_work(Some(addr), event_loop);
             } else {
                 let mut target_hostname = remote_hostname.to_string();
@@ -261,10 +261,10 @@ impl EventHandler for ProxyRequestHandler {
                 loop {
                     match global_config.querier_matcher.get(&target_hostname) {
                         Some(QuerierAction::To(t)) => {
-                            println!("Querier re-target to {}", t);
+                            wd_log::log_info_ln!("Querier (re-target) to {}", t);
                             target_hostname = t.to_string();
                             if target_step_count > 100 {
-                                println!("ProxyRequestHandler # too many re-targetting");
+                                wd_log::log_warn_ln!("ProxyRequestHandler # too many re-targetting");
                                 return;
                             }
                             target_step_count += 1;
@@ -273,24 +273,24 @@ impl EventHandler for ProxyRequestHandler {
                         Some(QuerierAction::Dns(d)) => {
                             if let Ok(ip_addr) = IpAddr::from_str(&target_hostname) {
                                 // use IP address direcly if given
-                                println!("Querier IP {}", ip_addr);
+                                wd_log::log_info_ln!("Querier (IP) {}", ip_addr);
                                 query_ready_callback.do_work(Some(ip_addr), event_loop);
                             } else {
                                 let dns_query_token = Token(query_ready_callback.client.token.0 + 7);
                                 match crate::global::get_global_config().core.dns_server.get(&d) {
                                     None => {
-                                        println!("ProxyRequestHandler # cannot find the assigned querier server.");
+                                        wd_log::log_info_ln!("ProxyRequestHandler # cannot find the assigned querier server.");
                                         return;
                                     }
                                     Some((dns_server_protocol, dns_server_addr)) => {
                                         match dns_server_protocol {
                                             DnsServerProtocol::Tls => {
-                                                println!("Querier Tls-ask {}", target_hostname);
+                                                wd_log::log_info_ln!("Querier (DoT) {}", target_hostname);
                                                 let resolver = DnsDotResolver::new(*dns_server_addr);
                                                 resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
                                             }
                                             DnsServerProtocol::Udp => {
-                                                println!("Querier Udp-ask {}", target_hostname);
+                                                wd_log::log_info_ln!("Querier (DoU) {}", target_hostname);
                                                 let resolver = DnsDouResolver::new(*dns_server_addr);
                                                 resolver.query(&target_hostname, query_ready_callback, dns_query_token, event_loop);
                                             }
@@ -301,7 +301,7 @@ impl EventHandler for ProxyRequestHandler {
                             break;
                         }
                         None => {
-                            println!("ProxyRequestHandler # cannot find a querier action.");
+                            wd_log::log_warn_ln!("ProxyRequestHandler # cannot find a querier action.");
                             return;
                         }
                     }
@@ -325,7 +325,7 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
             return;
         }
         let addr = addr.unwrap();
-        println!("Querier DNS result {} => {}", self.remote_hostname, addr);
+        wd_log::log_info_ln!("DNS Query result for \"{}\" is \"{}\"", self.remote_hostname, addr);
         store_dns_record_into_global_dns_cache(&self.remote_hostname, addr.clone());
         self.do_work(Some(addr), event_loop);
     }
@@ -353,7 +353,8 @@ impl ProxyQueryDoneCallback {
                     "*" => (true, request_hostname),
                     h => (true, h),
                 };
-                println!("Transformer TunnelSni {}", if sni_enable { sni_value } else { "no-sni" });
+                wd_log::log_info_ln!("Use transformer: SNI Rewritter \"{}\"",
+                    if sni_enable { sni_value } else { "<omitted>" });
                 let transformer = TunnelSniomitTransformer::new(
                     request_hostname,
                     sni_value,
@@ -366,7 +367,7 @@ impl ProxyQueryDoneCallback {
                 Box::new(transformer.unwrap())
             }
             Some(TransformerAction::DirectTransformer) | None => {
-                println!("Transformer Direct");
+                wd_log::log_info_ln!("Use transformer: Direct");
                 Box::new(TunnelDirectTransformer::new())
             }
         };

@@ -1,5 +1,5 @@
 [env]
-openssl_path = "C:\\Program Files\\Git\\usr\\bin\\openssl.exe"
+openssl_path = "openssl"
 
 [inbound-http]
 enable = true

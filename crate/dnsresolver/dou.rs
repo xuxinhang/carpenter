@@ -28,18 +28,18 @@ impl DnsDouResolver {
     ) -> () {
         let socket = UdpSocket::bind("0.0.0.0:0".parse().unwrap());
         if let Err(e) = socket {
-            println!("DnsDouResolver # tx_socket Error {:?}", e);
+            wd_log::log_error_ln!("DnsDouResolver # tx_socket Error {:?}", e);
             return;
         }
         let socket = socket.unwrap();
         if let Err(e) = socket.connect(self.dns_host) {
-            println!("DnsDouResolver # socket.connect {:?}", e);
+            wd_log::log_error_ln!("DnsDouResolver # socket.connect {:?}", e);
             return;
         }
 
         let dns_msg = build_dns_query_message(name);
         if dns_msg.is_err() {
-            println!("DnsDotResolver # Fail to build DNS message {:?}", dns_msg.unwrap_err());
+            wd_log::log_error_ln!("DnsDotResolver # Fail to build DNS message {:?}", dns_msg.unwrap_err());
             return;
         }
         let dns_msg = dns_msg.unwrap();
@@ -83,7 +83,7 @@ impl EventHandler for DnsDouResolverSenderWritableHandler {
             let prof = &mut * borw;
             let size = prof.socket.send(&prof.sent_dns_message);
             if let Err(e) = size {
-                println!("DnsDouResolverSenderWritableHandler # sender_socket.send {:?}", e);
+                wd_log::log_info_ln!("DnsDouResolverSenderWritableHandler # sender_socket.send {:?}", e);
                 return;
             }
 
@@ -116,7 +116,7 @@ impl EventHandler for DnsDouResolverReceiverReadableHandler {
             let mut buffer = vec![0; 65536];
             let size = prof.socket.recv(&mut buffer);
             if let Err(e) = size {
-                println!("DnsDouResolverReceiverReadableHandler # recv {:?}", e);
+                wd_log::log_info_ln!("DnsDouResolverReceiverReadableHandler # recv {:?}", e);
                 return;
             }
             buffer.resize(size.unwrap(), 0);
@@ -124,7 +124,7 @@ impl EventHandler for DnsDouResolverReceiverReadableHandler {
             let addr = match parse_dns_response_message(&buffer) {
                 Ok(maybe_addr) => maybe_addr,
                 Err(e) => {
-                    println!("DnsDouResolver # parse_dns_response_message error {:?}", e);
+                    wd_log::log_error_ln!("DnsDouResolver # parse_dns_response_message error {:?}", e);
                     None
                 }
             };

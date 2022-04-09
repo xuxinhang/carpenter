@@ -59,14 +59,14 @@ impl DnsDotResolver {
             "cloudflare-dns.com".try_into().unwrap(),
         );
         if let Err(e) = tls {
-            println!("DnsDotResolver # fail to create TLS session {:?}", e);
+            wd_log::log_error_ln!("DnsDotResolver # fail to create TLS session {:?}", e);
             return;
         }
         let tls = tls.unwrap();
 
         let conn = TcpStream::connect(self.dns_host);
         if conn.is_err() {
-            println!("DnsDotResolver # Error connect {:?}", conn.unwrap_err());
+            wd_log::log_error_ln!("DnsDotResolver # Error connect {:?}", conn.unwrap_err());
             return;
         }
         let conn = conn.unwrap();
@@ -81,7 +81,7 @@ impl DnsDotResolver {
 
         let dns_msg = build_dns_query_message(name);
         if dns_msg.is_err() {
-            println!("DnsDotResolver # Fail to build DNS message {:?}", dns_msg.unwrap_err());
+            wd_log::log_error_ln!("DnsDotResolver # Fail to build DNS message {:?}", dns_msg.unwrap_err());
             return;
         }
         let mut dns_msg = dns_msg.unwrap();
