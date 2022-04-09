@@ -3,8 +3,8 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use crate::transformer::{TunnelTransformer, TransferResult};
 use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
+use super::buffer::StreamBuffer;
 
-const MAX_BUFFER_UINT_SIZE: usize = 4*1024*1024;
 
 enum ServerName {
     Addr4(std::net::Ipv4Addr),
@@ -34,8 +34,8 @@ impl std::str::FromStr for ServerName {
 pub struct TunnelSniomitTransformer {
     local_tls: ServerConnection,
     remote_tls: ClientConnection,
-    transmit_plaintext_buffer: Vec<Vec<u8>>,
-    receive_plaintext_buffer: Vec<Vec<u8>>,
+    transmit_plaintext_buffer: StreamBuffer,
+    receive_plaintext_buffer: StreamBuffer,
     _transmit_tls_will_close: bool,
     _receive_tls_will_close: bool,
 }
@@ -137,8 +137,8 @@ impl TunnelSniomitTransformer {
                     server_str.try_into().unwrap_or("localhost".try_into().unwrap()),
                 ),
             ).unwrap(),
-            transmit_plaintext_buffer: Vec::new(),
-            receive_plaintext_buffer: Vec::new(),
+            transmit_plaintext_buffer: StreamBuffer::new(),
+            receive_plaintext_buffer: StreamBuffer::new(),
             _transmit_tls_will_close: false,
             _receive_tls_will_close: false,
         })
@@ -150,43 +150,39 @@ impl TunnelTransformer for TunnelSniomitTransformer {
     fn transmit_write(&mut self, source: &mut dyn Read) -> TransferResult {
         let tls = &mut self.local_tls;
         // if !tls.wants_read() {
-        //     return TransferResult::Data(0);
-        // }
 
         // we have ensured no plaintext left.
         match tls.read_tls(source) {
             Err(e) => {
-                self.transmit_plaintext_buffer.push(Vec::new());
+                self.transmit_plaintext_buffer.set_state(-1);
                 return TransferResult::IoError(e);
             }
             Ok(read_size) => {
                 match tls.process_new_packets() {
                     Err(e) => {
-                        self.transmit_plaintext_buffer.push(Vec::new());
+                        self.transmit_plaintext_buffer.set_state(-1);
                         return TransferResult::TlsError(e);
                     }
                     Ok(tls_state) => {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
                         if expected_plaintext_size != 0 {
+                            let r = &mut tls.reader();
                             let mut current_plaintext_size = 0;
-                            let mut buf = vec![0; MAX_BUFFER_UINT_SIZE];
                             while current_plaintext_size < expected_plaintext_size {
-                                match tls.reader().read(&mut buf) {
-                                    Err(e) => {
-                                        self.transmit_plaintext_buffer.push(Vec::new());
-                                        return TransferResult::IoError(e);
-                                    }
-                                    Ok(n) => {
-                                        current_plaintext_size += n;
-                                        self.transmit_plaintext_buffer.push(Vec::from(&buf[..n]));
+                                match self.transmit_plaintext_buffer.read_from(r) {
+                                    Err(e) => return TransferResult::IoError(e),
+                                    Ok(None) => return TransferResult::End(0),
+                                    Ok(Some(size)) => {
+                                        current_plaintext_size += size;
                                     }
                                 }
                             }
                         }
                     }
                 }
+
                 if read_size == 0 {
-                    self.transmit_plaintext_buffer.push(Vec::new());
+                    self.transmit_plaintext_buffer.set_state(1);
                     return TransferResult::End(read_size);
                 } else {
                     return TransferResult::Data(read_size);
@@ -197,83 +193,77 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
     fn transmit_read(&mut self, target: &mut dyn Write) -> TransferResult {
         let tls = &mut self.remote_tls;
+        let mut tls_to_close = false;
 
         loop {
+            // first try to write_tls directly
             if tls.wants_write() {
                 match tls.write_tls(target) {
-                    Err(e) => {
-                        return TransferResult::IoError(e);
-                    }
-                    Ok(n) => {
-                        return TransferResult::Data(n);
-                    }
+                    Err(e) => return TransferResult::IoError(e),
+                    Ok(n) => return TransferResult::Data(n),
                 }
             }
 
-            if self._transmit_tls_will_close {
+            if tls_to_close {
                 return TransferResult::End(0);
-            } else {
-                if self.transmit_plaintext_buffer.is_empty() {
+            }
+
+            // load more plaintext if there is nothing for write_tls
+            match self.transmit_plaintext_buffer.write_into(&mut tls.writer()) {
+                Ok(None) => {
+                    tls_to_close = true;
+                    tls.send_close_notify();
+                    continue;
+                },
+                Ok(Some(0)) => {
                     return TransferResult::Data(0);
                 }
-                let mut buf = self.transmit_plaintext_buffer.remove(0);
-                match buf.len() {
-                    0 => {
-                        self._transmit_tls_will_close = true;
-                        tls.send_close_notify();
-                        continue;
-                    }
-                    _ => {
-                        let _ = tls.writer().write(&mut buf);
-                        continue;
-                    }
+                Ok(Some(_n)) => {
+                    continue;
+                }
+                Err(e) => {
+                    return TransferResult::IoError(e);
                 }
             }
-
-            unreachable!();
         }
     }
 
     fn receive_write(&mut self, source: &mut dyn Read) -> TransferResult {
         let tls = &mut self.remote_tls;
         // if !tls.wants_read() {
-        //     return TransferResult::Data(0);
-        // }
 
         // we have ensured no plaintext left.
         match tls.read_tls(source) {
             Err(e) => {
-                self.receive_plaintext_buffer.push(Vec::new());
+                self.receive_plaintext_buffer.set_state(-1);
                 return TransferResult::IoError(e);
             }
             Ok(read_size) => {
                 match tls.process_new_packets() {
                     Err(e) => {
-                        self.receive_plaintext_buffer.push(Vec::new());
+                        self.receive_plaintext_buffer.set_state(-1);
                         return TransferResult::TlsError(e);
                     }
                     Ok(tls_state) => {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
                         if expected_plaintext_size != 0 {
+                            let r = &mut tls.reader();
                             let mut current_plaintext_size = 0;
-                            let mut buf = vec![0; MAX_BUFFER_UINT_SIZE];
                             while current_plaintext_size < expected_plaintext_size {
-                                match tls.reader().read(&mut buf) {
-                                    Err(e) => {
-                                        self.receive_plaintext_buffer.push(Vec::new());
-                                        return TransferResult::IoError(e);
-                                    }
-                                    Ok(n) => {
-                                        current_plaintext_size += n;
-                                        self.receive_plaintext_buffer.push(Vec::from(&buf[..n]));
+                                match self.receive_plaintext_buffer.read_from(r) {
+                                    Err(e) => return TransferResult::IoError(e),
+                                    Ok(None) => return TransferResult::End(0),
+                                    Ok(Some(size)) => {
+                                        current_plaintext_size += size;
                                     }
                                 }
                             }
                         }
                     }
                 }
+
                 if read_size == 0 {
-                    self.receive_plaintext_buffer.push(Vec::new());
+                    self.receive_plaintext_buffer.set_state(1);
                     return TransferResult::End(read_size);
                 } else {
                     return TransferResult::Data(read_size);
@@ -284,44 +274,38 @@ impl TunnelTransformer for TunnelSniomitTransformer {
 
     fn receive_read(&mut self, target: &mut dyn Write) -> TransferResult {
         let tls = &mut self.local_tls;
+        let mut tls_to_close = false;
 
         loop {
+            // first try to write_tls directly
             if tls.wants_write() {
                 match tls.write_tls(target) {
-                    Err(e) => {
-                        return TransferResult::IoError(e);
-                    }
-                    Ok(n) => {
-                        return TransferResult::Data(n);
-                    }
+                    Err(e) => return TransferResult::IoError(e),
+                    Ok(n) => return TransferResult::Data(n),
                 }
             }
 
-            if self._receive_tls_will_close {
+            if tls_to_close {
                 return TransferResult::End(0);
-            } else {
-                if self.receive_plaintext_buffer.is_empty() {
+            }
+
+            // load more plaintext if there is nothing for write_tls
+            match self.receive_plaintext_buffer.write_into(&mut tls.writer()) {
+                Ok(None) => {
+                    tls_to_close = true;
+                    tls.send_close_notify();
+                    continue;
+                }
+                Ok(Some(0)) => {
                     return TransferResult::Data(0);
                 }
-                let mut buf = self.receive_plaintext_buffer.remove(0);
-                match buf.len() {
-                    0 => {
-                        self._receive_tls_will_close = true;
-                        tls.send_close_notify();
-                        continue;
-                    }
-                    _ => {
-                        let _ = tls.writer().write(&mut buf);
-                        continue;
-                    }
+                Ok(Some(_n)) => {
+                    continue;
+                }
+                Err(e) => {
+                    return TransferResult::IoError(e);
                 }
             }
-
-            unreachable!();
         }
     }
 }
-
-
-
-

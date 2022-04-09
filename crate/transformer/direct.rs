@@ -1,62 +1,18 @@
-use std::io;
 use std::io::{Read, Write};
 use crate::transformer::{TunnelTransformer, TransferResult};
-
-
-struct TunnelPacketBuffer {
-    buf: Vec<Vec<u8>>,
-}
-
-impl TunnelPacketBuffer {
-    fn new() -> Self {
-        Self { buf: Vec::new() }
-    }
-
-    fn read_from(&mut self, sock: &mut dyn Read) -> io::Result<Option<usize>> {
-        let mut accu_size = 0;
-        while self.buf.len() <= 64 {
-            let mut b = vec![0; 4096];
-            let read_size = sock.read(&mut b)?;
-            accu_size += read_size;
-            let short_packet = read_size < 4096;
-            if short_packet {
-                b.truncate(read_size);
-            }
-            self.buf.push(b);
-            if short_packet {
-                break;
-            }
-            break;
-        }
-        Ok(Some(accu_size))
-    }
-
-    fn write_into(&mut self, sock: &mut dyn Write) -> io::Result<Option<usize>> {
-        if self.buf.is_empty() {
-            return Ok(None);
-        }
-        let mut accu_size = 0;
-        while !self.buf.is_empty() {
-            let b = self.buf.remove(0);
-            let write_size = sock.write(&b)?;
-            accu_size += write_size;
-            break;
-        }
-        Ok(Some(accu_size))
-    }
-}
+use super::buffer::StreamBuffer;
 
 
 pub struct TunnelDirectTransformer {
-    transmit_buffer: TunnelPacketBuffer,
-    receive_buffer: TunnelPacketBuffer,
+    transmit_buffer: StreamBuffer,
+    receive_buffer: StreamBuffer,
 }
 
 impl TunnelDirectTransformer {
     pub fn new() -> Self {
         Self {
-            transmit_buffer: TunnelPacketBuffer::new(),
-            receive_buffer: TunnelPacketBuffer::new(),
+            transmit_buffer: StreamBuffer::new(),
+            receive_buffer: StreamBuffer::new(),
         }
     }
 }
@@ -64,33 +20,33 @@ impl TunnelDirectTransformer {
 impl TunnelTransformer for TunnelDirectTransformer {
     fn transmit_write(&mut self, source: &mut dyn Read) -> TransferResult {
         match self.transmit_buffer.read_from(source) {
-            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(0)) => TransferResult::Data(0),
             Ok(Some(n)) => TransferResult::Data(n),
-            Ok(None) => TransferResult::Data(0),
+            Ok(None) => TransferResult::End(0),
             Err(e) => TransferResult::IoError(e),
         }
     }
     fn transmit_read(&mut self, target: &mut dyn Write) -> TransferResult {
         match self.transmit_buffer.write_into(target) {
-            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(0)) => TransferResult::Data(0),
             Ok(Some(n)) => TransferResult::Data(n),
-            Ok(None) => TransferResult::Data(0),
+            Ok(None) => TransferResult::End(0),
             Err(e) => TransferResult::IoError(e),
         }
     }
     fn receive_write(&mut self, source: &mut dyn Read) -> TransferResult {
         match self.receive_buffer.read_from(source) {
-            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(0)) => TransferResult::Data(0),
             Ok(Some(n)) => TransferResult::Data(n),
-            Ok(None) => TransferResult::Data(0),
+            Ok(None) => TransferResult::End(0),
             Err(e) => TransferResult::IoError(e),
         }
     }
     fn receive_read(&mut self, target: &mut dyn Write) -> TransferResult {
         match self.receive_buffer.write_into(target) {
-            Ok(Some(0)) => TransferResult::End(0),
+            Ok(Some(0)) => TransferResult::Data(0),
             Ok(Some(n)) => TransferResult::Data(n),
-            Ok(None) => TransferResult::Data(0),
+            Ok(None) => TransferResult::End(0),
             Err(e) => TransferResult::IoError(e),
         }
     }
