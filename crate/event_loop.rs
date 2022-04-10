@@ -11,12 +11,12 @@ pub trait EventHandler {
     fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
 }
 
-pub struct EventRegistryIntf(*mut EventLoop, Token, Interest);
+pub struct EventRegistryIntf(usize, Token, Interest);
 
 impl EventRegistryIntf {
     pub fn get_event_loop(&mut self) -> &mut EventLoop {
         use std::mem::size_of;
-        let offset = size_of::<EventLoop>() - size_of::<EventRegistryIntf>();
+        let offset = self.0;
         let ptr = self as *mut EventRegistryIntf as usize - offset;
         unsafe { (ptr as *mut EventLoop).as_mut().unwrap() }
     }
@@ -80,9 +80,9 @@ impl EventLoop {
             poll: Poll::new()?,
             events: Events::with_capacity(event_capacity),
             handlers: HashMap::new(),
-            registry_intf: EventRegistryIntf(std::ptr::null_mut() as *mut _, Token(0), Interest::READABLE),
+            registry_intf: EventRegistryIntf(0, Token(0), Interest::READABLE),
         };
-        this.registry_intf.0 = &mut this;
+        this.registry_intf.0 = (&mut this.registry_intf as *mut _ as usize) - (&mut this as *mut _ as usize);
         Ok(this)
     }
 

@@ -34,7 +34,6 @@ fn main() {
         panic!();
     }
 
-
     // start server and event loop
     let mut el = EventLoop::new(1024).unwrap();
 
@@ -139,3 +138,4 @@ fn start_proxy_server(el: &mut EventLoop) -> usize {
     }
     listen_count
 }
+
