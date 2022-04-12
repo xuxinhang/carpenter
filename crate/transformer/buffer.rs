@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 
 const STREAM_BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
-const STREAM_BUFFER_BRUST_SIZE: usize = 1 * 1024 * 1024;
+const STREAM_BUFFER_BRUST_SIZE: usize = 16 * 1024;
 
 pub struct StreamBuffer {
     buf: VecDeque<u8>,
@@ -13,7 +13,7 @@ pub struct StreamBuffer {
 impl StreamBuffer {
     pub fn new() -> Self {
         Self {
-            buf: VecDeque::with_capacity(STREAM_BUFFER_BRUST_SIZE * 2),
+            buf: VecDeque::with_capacity(STREAM_BUFFER_BRUST_SIZE),
             max_size: STREAM_BUFFER_CAPACITY,
         }
     }

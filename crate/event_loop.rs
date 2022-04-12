@@ -15,7 +15,6 @@ pub struct EventRegistryIntf(usize, Token, Interest);
 
 impl EventRegistryIntf {
     pub fn get_event_loop(&mut self) -> &mut EventLoop {
-        use std::mem::size_of;
         let offset = self.0;
         let ptr = self as *mut EventRegistryIntf as usize - offset;
         unsafe { (ptr as *mut EventLoop).as_mut().unwrap() }
@@ -118,6 +117,9 @@ impl EventLoop {
             }
 
             for (evt, tok) in pending_events {
+                if self.handlers.get(&tok).is_none() {
+                    continue;
+                }
                 let mut pending_hdlr_idx = Vec::new();
                 let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
                 for (idx, (inte, _)) in hdlr_lst.iter().enumerate() {
@@ -131,12 +133,13 @@ impl EventLoop {
                     let (_, hdlr) = hdlr_lst.remove(*x);
                     hdlr
                 }));
-                // TODO
-                // if hdlr_lst.is_empty() {
-                //     self.handlers.remove(&tok);
-                // }
                 while !pending_hdlr_box.is_empty() {
                     pending_hdlr_box.pop().unwrap().handle(&evt, self);
+                }
+                // remove useless items
+                let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
+                if hdlr_lst.is_empty() {
+                    self.handlers.remove(&tok);
                 }
             }
         }
