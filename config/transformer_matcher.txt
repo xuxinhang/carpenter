@@ -16,7 +16,8 @@ imgur.com:443  +sni _
 *.imgur.com:443  +sni _
 reddit.com:443  +sni _
 *.reddit.com:443  +sni _
-web.archive.org:443  +sni web.archive.com
+*.archive.org:443 +sni _
+archive.org:443 +sni _
 
 
 # www.pixiv.net  +sni www.pixiv.com

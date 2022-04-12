@@ -489,30 +489,24 @@ impl EventHandler for ProxyTransferLocalReadableHandler {
             let result = tunnel_mut.transmit_pull();
             let conn = &mut tunnel_mut.local_conn;
             match result {
-                TransferResult::Data(0) => {
+                (Err(e), _) => {
+                    wd_log::log_warn_ln!("ProxyTransferLocalReadableHandler # transmit_write error {:?}", e);
+                    let _ = conn.shutdown(Shutdown::Read);
+                }
+                (Ok(n), ended) => {
                     // println!("ProxyTransferLocalReadableHandler # transmit pull {} bytes", 0);
-                    mark_reregister_local_readable();
-                }
-                TransferResult::Data(_n) => {
-                    // println!("ProxyTransferLocalReadableHandler # transmit pull {} bytes", _n);
-                    mark_reregister_local_readable();
-                    mark_reregister_local_writable();
-                    mark_reregister_remote_writable();
-                    // IMPORTANT: We also need to register local-side socket writable
-                    //            because the local-side tls connection may be handshaking
-                }
-                TransferResult::End(_) => {
-                    // println!("ProxyTransferLocalReadableHandler # transmit end");
-                    let _ = conn.shutdown(Shutdown::Read);
-                    mark_reregister_remote_writable();
-                }
-                TransferResult::IoError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferLocalReadableHandler # transmit_write error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Read);
-                }
-                TransferResult::TlsError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferLocalReadableHandler # transmit_write error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Read);
+                    if ended {
+                        wd_log::log_debug_ln!("ProxyTransferLocalReadableHandler # read shutdown");
+                        let _ = conn.shutdown(Shutdown::Read);
+                    } else {
+                        mark_reregister_local_readable();
+                    }
+                    if n != 0 {
+                        // IMPORTANT: We also need to register local-side socket writable
+                        // because the local-side tls connection may be handshaking
+                        mark_reregister_local_writable();
+                        mark_reregister_remote_writable();
+                    }
                 }
             }
         }
@@ -563,30 +557,24 @@ impl EventHandler for ProxyTransferRemoteReadableHandler {
             let result = tunnel_mut.receive_pull();
             let conn = &mut tunnel_mut.remote_conn;
             match result {
-                TransferResult::Data(0) => {
+                (Err(e), _) => {
+                    wd_log::log_warn_ln!("ProxyTransferRemoteReadableHandler # receive_write error {:?}", e);
+                    let _ = conn.shutdown(Shutdown::Read);
+                }
+                (Ok(n), ended) => {
                     // println!("ProxyTransferRemoteReadableHandler # transmit pull {} bytes", 0);
-                    mark_reregister_remote_readable();
-                }
-                TransferResult::Data(_n) => {
-                    // println!("ProxyTransferRemoteReadableHandler # transmit pull {} bytes", _n);
-                    mark_reregister_remote_readable();
-                    mark_reregister_local_writable();
-                    mark_reregister_remote_writable();
-                    // IMPORTANT: We also need to register remote-side socket writable
-                    //            because the remote-side tls connection may be handshaking
-                }
-                TransferResult::End(_) => {
-                    let _ = conn.shutdown(Shutdown::Read);
-                    mark_reregister_local_writable();
-                    mark_reregister_remote_writable();
-                }
-                TransferResult::IoError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferRemoteReadableHandler # receive_write error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Read);
-                }
-                TransferResult::TlsError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferRemoteReadableHandler # receive_write error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Read);
+                    if ended {
+                        wd_log::log_debug_ln!("ProxyTransferRemoteReadableHandler # read shutdown");
+                        let _ = conn.shutdown(Shutdown::Read);
+                    } else {
+                        mark_reregister_remote_readable();
+                    }
+                    if n != 0 {
+                        // IMPORTANT: We also need to register remote-side socket writable
+                        // because the remote-side tls connection may be handshaking
+                        mark_reregister_local_writable();
+                        mark_reregister_remote_writable();
+                    }
                 }
             }
         }
@@ -632,25 +620,25 @@ impl EventHandler for ProxyTransferRemoteWritableHandler {
             let tunnel_mut = &mut * self.tunnel.borrow_mut();
             let result = tunnel_mut.transmit_push();
             let conn = &mut tunnel_mut.remote_conn;
+            let peer_conn = &mut tunnel_mut.local_conn;
+            let close_both_side_conn = || {
+                let _ = conn.shutdown(Shutdown::Write);
+                let _ = peer_conn.shutdown(Shutdown::Read);
+            };
             match result {
-                TransferResult::Data(0) => {
-                    // println!("ProxyTransferRemoteWritableHandler # transfer {} bytes.", 0);
+                (Err(e), _) => {
+                    wd_log::log_warn_ln!("ProxyTransferRemoteWritableHandler # transmit_push Error {:?}", e);
+                    close_both_side_conn();
                 }
-                TransferResult::Data(_n) => {
+                (Ok(n), ended) => {
                     // println!("ProxyTransferRemoteWritableHandler # transfer {} bytes.", _n);
-                    mark_reregister();
-                }
-                TransferResult::End(_) => {
-                    // wd_log::log_debug_ln!("HttpProxyRemote : write zero byte and end listening");
-                    let _ = conn.shutdown(Shutdown::Write);
-                }
-                TransferResult::IoError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferRemoteWritableHandler # transmit_push Error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Write);
-                }
-                TransferResult::TlsError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferRemoteWritableHandler # transmit_push Error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Write);
+                    if n != 0 {
+                        mark_reregister();
+                    }
+                    if ended {
+                        wd_log::log_debug_ln!("HttpProxyRemote : write zero byte and end listening");
+                        close_both_side_conn();
+                    }
                 }
             }
         }
@@ -685,23 +673,25 @@ impl EventHandler for ProxyTransferLocalWritableHandler {
             // println!("ProxyTransferLocalWritableHandler # handle");
             let tunnel_mut = &mut * self.tunnel.borrow_mut();
             let result = tunnel_mut.receive_push();
-            let conn = &mut tunnel_mut.remote_conn;
+            let conn = &mut tunnel_mut.local_conn;
+            let peer_conn = &mut tunnel_mut.remote_conn;
+            let close_both_side_conn = || {
+                let _ = conn.shutdown(Shutdown::Write);
+                let _ = peer_conn.shutdown(Shutdown::Read);
+            };
             match result {
-                TransferResult::Data(0) => {}
-                TransferResult::Data(_) => {
-                    mark_reregister();
-                }
-                TransferResult::End(_) => {
-                    // wd_log::log_debug_ln!("ProxyTransferLocalWritableHandler # receive_read End");
-                    let _ = conn.shutdown(Shutdown::Write);
-                }
-                TransferResult::IoError(e) => {
+                (Err(e), _) => {
                     wd_log::log_warn_ln!("ProxyTransferLocalWritableHandler # receive_read Error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Write);
+                    close_both_side_conn();
                 }
-                TransferResult::TlsError(e) => {
-                    wd_log::log_warn_ln!("ProxyTransferLocalWritableHandler # receive_read Error {:?}", e);
-                    let _ = conn.shutdown(Shutdown::Write);
+                (Ok(n), ended) => {
+                    if n != 0 {
+                        mark_reregister();
+                    }
+                    if ended {
+                        wd_log::log_debug_ln!("ProxyTransferLocalWritableHandler # receive_read End");
+                        close_both_side_conn();
+                    }
                 }
             }
         }

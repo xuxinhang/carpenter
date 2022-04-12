@@ -36,8 +36,8 @@ pub struct TunnelSniomitTransformer {
     remote_tls: ClientConnection,
     transmit_plaintext_buffer: StreamBuffer,
     receive_plaintext_buffer: StreamBuffer,
-    _transmit_tls_will_close: bool,
-    _receive_tls_will_close: bool,
+    transmit_closed: bool,
+    receive_closed: bool,
 }
 
 
@@ -139,8 +139,8 @@ impl TunnelSniomitTransformer {
             ).unwrap(),
             transmit_plaintext_buffer: StreamBuffer::new(),
             receive_plaintext_buffer: StreamBuffer::new(),
-            _transmit_tls_will_close: false,
-            _receive_tls_will_close: false,
+            transmit_closed: false,
+            receive_closed: false,
         })
     }
 }
@@ -149,19 +149,22 @@ impl TunnelSniomitTransformer {
 impl TunnelTransformer for TunnelSniomitTransformer {
     fn transmit_write(&mut self, source: &mut dyn Read) -> TransferResult {
         let tls = &mut self.local_tls;
-        // if !tls.wants_read() {
 
         // we have ensured no plaintext left.
         match tls.read_tls(source) {
             Err(e) => {
-                self.transmit_plaintext_buffer.set_state(-1);
-                return TransferResult::IoError(e);
+                self.transmit_closed = true;
+                return (Err(format!("{:?}", e)), true);
             }
             Ok(read_size) => {
+                if read_size == 0 {
+                    self.transmit_closed = true;
+                }
+
                 match tls.process_new_packets() {
                     Err(e) => {
-                        self.transmit_plaintext_buffer.set_state(-1);
-                        return TransferResult::TlsError(e);
+                        self.transmit_closed = true;
+                        return (Err(format!("{:?}", e)), true);
                     }
                     Ok(tls_state) => {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
@@ -170,10 +173,17 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                             let mut current_plaintext_size = 0;
                             while current_plaintext_size < expected_plaintext_size {
                                 match self.transmit_plaintext_buffer.read_from(r) {
-                                    Err(e) => return TransferResult::IoError(e),
-                                    Ok(None) => return TransferResult::End(0),
-                                    Ok(Some(size)) => {
-                                        current_plaintext_size += size;
+                                    (Some(Err(e)), _) => {
+                                        self.transmit_closed = true;
+                                        return (Err(format!("{:?}", e)), true);
+                                    }
+                                    (Some(Ok(n)), _) => {
+                                        if n == 0 { self.transmit_closed = true; }
+                                        current_plaintext_size += n;
+                                        // return (Ok(n), self.transmit_closed);
+                                    },
+                                    (None, _) => {
+                                        // return (Ok(0), self.transmit_closed);
                                     }
                                 }
                             }
@@ -181,12 +191,7 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                     }
                 }
 
-                if read_size == 0 {
-                    self.transmit_plaintext_buffer.set_state(1);
-                    return TransferResult::End(read_size);
-                } else {
-                    return TransferResult::Data(read_size);
-                }
+                return (Ok(read_size), self.transmit_closed);
             }
         }
     }
@@ -199,30 +204,39 @@ impl TunnelTransformer for TunnelSniomitTransformer {
             // first try to write_tls directly
             if tls.wants_write() {
                 match tls.write_tls(target) {
-                    Err(e) => return TransferResult::IoError(e),
-                    Ok(n) => return TransferResult::Data(n),
+                    Err(e) => {
+                        return (Err(format!("{:?}", e)), true);
+                    },
+                    Ok(n) => {
+                        return (Ok(n), !tls.wants_write() && tls_to_close);
+                    },
                 }
             }
 
             if tls_to_close {
-                return TransferResult::End(0);
+                return (Ok(0), true);
             }
 
             // load more plaintext if there is nothing for write_tls
             match self.transmit_plaintext_buffer.write_into(&mut tls.writer()) {
-                Ok(None) => {
-                    tls_to_close = true;
-                    tls.send_close_notify();
-                    continue;
-                },
-                Ok(Some(0)) => {
-                    return TransferResult::Data(0);
+                (Some(Err(e)), _) => {
+                    return (Err(format!("{:?}", e)), true);
                 }
-                Ok(Some(_n)) => {
-                    continue;
+                (Some(Ok(n)), pending) => {
+                    if pending == 0 && self.transmit_closed {
+                        tls_to_close = true;
+                        tls.send_close_notify();
+                    } else if n == 0 {
+                        return (Ok(0), false);
+                    }
                 }
-                Err(e) => {
-                    return TransferResult::IoError(e);
+                (None, pending) => {
+                    if pending == 0 && self.transmit_closed {
+                        tls_to_close = true;
+                        tls.send_close_notify();
+                    } else {
+                        return (Ok(0), false);
+                    }
                 }
             }
         }
@@ -235,14 +249,18 @@ impl TunnelTransformer for TunnelSniomitTransformer {
         // we have ensured no plaintext left.
         match tls.read_tls(source) {
             Err(e) => {
-                self.receive_plaintext_buffer.set_state(-1);
-                return TransferResult::IoError(e);
+                self.receive_closed = true;
+                return (Err(format!("{:?}", e)), true);
             }
             Ok(read_size) => {
+                if read_size == 0 {
+                    self.receive_closed = true;
+                }
+
                 match tls.process_new_packets() {
                     Err(e) => {
-                        self.receive_plaintext_buffer.set_state(-1);
-                        return TransferResult::TlsError(e);
+                        self.receive_closed = true;
+                        return (Err(format!("{:?}", e)), true);
                     }
                     Ok(tls_state) => {
                         let expected_plaintext_size = tls_state.plaintext_bytes_to_read();
@@ -251,23 +269,22 @@ impl TunnelTransformer for TunnelSniomitTransformer {
                             let mut current_plaintext_size = 0;
                             while current_plaintext_size < expected_plaintext_size {
                                 match self.receive_plaintext_buffer.read_from(r) {
-                                    Err(e) => return TransferResult::IoError(e),
-                                    Ok(None) => return TransferResult::End(0),
-                                    Ok(Some(size)) => {
-                                        current_plaintext_size += size;
+                                    (Some(Err(e)), _) => {
+                                        self.receive_closed = true;
+                                        return (Err(format!("{:?}", e)), true);
                                     }
+                                    (Some(Ok(n)), _) => {
+                                        if n == 0 { self.receive_closed = true; }
+                                        current_plaintext_size += n;
+                                    }
+                                    (None, _) => {}
                                 }
                             }
                         }
                     }
                 }
 
-                if read_size == 0 {
-                    self.receive_plaintext_buffer.set_state(1);
-                    return TransferResult::End(read_size);
-                } else {
-                    return TransferResult::Data(read_size);
-                }
+                return (Ok(read_size), self.receive_closed);
             }
         }
     }
@@ -280,30 +297,39 @@ impl TunnelTransformer for TunnelSniomitTransformer {
             // first try to write_tls directly
             if tls.wants_write() {
                 match tls.write_tls(target) {
-                    Err(e) => return TransferResult::IoError(e),
-                    Ok(n) => return TransferResult::Data(n),
+                    Err(e) => {
+                        return (Err(format!("{:?}", e)), true);
+                    },
+                    Ok(n) => {
+                        return (Ok(n), !tls.wants_write() && tls_to_close);
+                    },
                 }
             }
 
             if tls_to_close {
-                return TransferResult::End(0);
+                return (Ok(0), true);
             }
 
             // load more plaintext if there is nothing for write_tls
             match self.receive_plaintext_buffer.write_into(&mut tls.writer()) {
-                Ok(None) => {
-                    tls_to_close = true;
-                    tls.send_close_notify();
-                    continue;
+                (Some(Err(e)), _) => {
+                    return (Err(format!("{:?}", e)), true);
                 }
-                Ok(Some(0)) => {
-                    return TransferResult::Data(0);
+                (Some(Ok(n)), pending) => {
+                    if pending == 0 && self.receive_closed {
+                        tls_to_close = true;
+                        tls.send_close_notify();
+                    } else if n == 0 {
+                        return (Ok(0), false);
+                    }
                 }
-                Ok(Some(_n)) => {
-                    continue;
-                }
-                Err(e) => {
-                    return TransferResult::IoError(e);
+                (None, pending) => {
+                    if pending == 0 && self.receive_closed {
+                        tls_to_close = true;
+                        tls.send_close_notify();
+                    } else {
+                        return (Ok(0), false);
+                    }
                 }
             }
         }

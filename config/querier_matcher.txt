@@ -8,4 +8,6 @@
 *.office.net +dns secure
 *.onedrive.com +dns secure
 
-
+web.archive.org +dns secure
+*.archive.org +dns secure
+archive.org +dns secure
