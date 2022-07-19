@@ -2,6 +2,7 @@
 *.sina.cn +dns dot
 
 *.wikipedia.org +to 208.80.153.224
+upload.wikimedia.org +to 208.80.153.240
 *.wiki*.org +to wikipedia.org
 
 *.live.com +dns secure

@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, fs};
 use std::io::{Read, Write};
 use std::sync::Arc;
 use crate::transformer::{TunnelTransformer, TransferResult};
@@ -79,14 +79,23 @@ impl TunnelSniomitTransformer {
                 let crt_file_name = format!("_certs/issued/tls_domain__{}__crt.crt", domain_name);
                 let csr_file_name = format!("_certs/issued/tls_domain__{}__csr.pem", domain_name);
                 let key_file_name = String::from("_certs/root.key.pem");
+                let cfg_tmpl_name = String::from("config/sub_cert_conf_tmpl.txt");
+                let cfg_file_name = format!("_certs/issued/tls_domain__{}__cfg.pem", domain_name);
 
                 if !std::path::Path::new(&crt_file_name).exists() {
                     wd_log::log_info_ln!("Creating TLS certificate ({})...", domain_name);
+
+                    // generate request conf file
+                    let cfg_tmpl = fs::read_to_string(cfg_tmpl_name)?;
+                    let cfg_cont = cfg_tmpl.replace("{{DOMAIN_NAME}}", &domain_name);
+                    fs::write(&cfg_file_name, &cfg_cont)?;
+
                     std::process::Command::new(&openssl_path)
                         .args([
-                            "req", "-new", "-out", &csr_file_name,
+                            "req", "-new",
+                            "-out", &csr_file_name,
                             "-key", &key_file_name,
-                            "-subj", &format!("//X=1/CN={}", domain_name),
+                            "-config", &cfg_file_name,
                         ])
                         .output()?;
                     std::process::Command::new(&openssl_path)
@@ -96,11 +105,14 @@ impl TunnelSniomitTransformer {
                             "-days", "36500",
                             "-CA", "_certs/root.crt.crt",
                             "-CAkey",  "_certs/root.key.pem",
+                            "-extfile", &cfg_file_name,
+                            "-extensions", "req_extensions",
                             "-out", &crt_file_name,
-                            // "-CAcreateserial",
+                            "-CAcreateserial",
                         ])
                         .output()?;
                     std::fs::remove_file(csr_file_name)?;
+                    std::fs::remove_file(cfg_file_name)?;
                 }
                 (crt_file_name, key_file_name)
             }
