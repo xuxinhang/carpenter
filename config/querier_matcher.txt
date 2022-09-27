@@ -1,9 +1,15 @@
 * +dns normal
+
 *.sina.cn +dns dot
 
 *.wikipedia.org +to 208.80.153.224
 upload.wikimedia.org +to 208.80.153.240
 *.wiki*.org +to wikipedia.org
+
+gist.github.com +to github.com
+
+steamcommunity.com +dns secure
+*.steamcommunity.com +dns secure
 
 *.live.com +dns secure
 *.office.net +dns secure
@@ -12,3 +18,6 @@ upload.wikimedia.org +to 208.80.153.240
 web.archive.org +dns secure
 *.archive.org +dns secure
 archive.org +dns secure
+
+startpage.com +dns secure
+*.startpage.com +dns secure
