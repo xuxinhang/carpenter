@@ -6,7 +6,7 @@ use mio::{Token, Interest};
 use mio::event::{Event};
 use mio::net::{UdpSocket};
 use crate::event_loop::{EventLoop, EventHandler, EventRegistryIntf};
-use super::DnsResolveCallback;
+use super::{DnsResolver, DnsResolveCallback};
 use super::utils::{build_dns_query_message, parse_dns_response_message};
 
 
@@ -18,8 +18,10 @@ impl DnsDouResolver {
     pub fn new(host: SocketAddr) -> Self {
         Self { dns_host: host }
     }
+}
 
-    pub fn query(
+impl DnsResolver for DnsDouResolver {
+    fn query(
         &self,
         name: &str,
         callback: Box<dyn DnsResolveCallback>,

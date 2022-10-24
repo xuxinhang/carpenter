@@ -10,7 +10,7 @@ ST = CQ
 L  = CQ
 O  = _Carpenter
 OU = _Carpenter
-CN = {{DOMAIN_NAME}}
+CN = {{ALT_NAMES_DNS_VAL}}
 
 [req_extensions]
 basicConstraints        = CA:FALSE
@@ -19,4 +19,5 @@ extendedKeyUsage        = critical,serverAuth,clientAuth
 subjectAltName = @alt_names
 
 [alt_names]
-DNS.1 = {{DOMAIN_NAME}}
+{{ALT_NAMES_DNS_EN}} DNS.1 = {{ALT_NAMES_DNS_VAL}}
+{{ALT_NAMES_IP_EN}} IP.1 = {{ALT_NAMES_IP_VAL}}

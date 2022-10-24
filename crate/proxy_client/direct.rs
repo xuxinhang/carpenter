@@ -17,7 +17,7 @@ impl ProxyClientDirect {
     }
 
     pub fn connect(
-        &mut self,
+        &self,
         token: Token,
         event_loop: &mut EventLoop,
         readycall: Box<dyn ProxyClientReadyCall>,
@@ -49,22 +49,21 @@ impl EventHandler for ClientShakingHandler {
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
         if true || event.is_readable() || event.is_writable() { // @HACK: TODO
             if let Ok(Some(e)) | Err(e) = self.conn.take_error() {
-                println!("ClientShakingHandler # take_error {:?}", e);
+                wd_log::log_warn_ln!("ClientShakingHandler # take_error {:?}", e);
                 return;
             }
             match self.conn.peer_addr() {
                 Ok(_addr) => {
-                    // println!("ClientShakingHandler # peer connected. {}", _addr);
+                    wd_log::log_debug_ln!("ClientShakingHandler # peer connected. {}", _addr);
                     if let Err(e) = self.readycall.proxy_client_ready(event_loop, self.conn) {
-                        println!("ClientShakingHandler # ready error {:?}", e);
+                        wd_log::log_warn_ln!("ClientShakingHandler # ready error {:?}", e);
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotConnected => {
-                    // println!("Waiting");
                     event_loop.reregister(self).unwrap();
                 }
                 Err(e) => {
-                    println!("ProxyClientShakingHandler # peer_addr {:?}", e);
+                    wd_log::log_warn_ln!("ProxyClientShakingHandler # peer_addr {:?}", e);
                 }
             }
         }

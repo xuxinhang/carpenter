@@ -9,6 +9,16 @@ pub enum Hostname {
     Domain(String),
 }
 
+impl ToString for Hostname {
+    fn to_string(&self) -> String {
+        match self {
+            Hostname::Addr4(v) => v.to_string(),
+            Hostname::Addr6(v) => v.to_string(),
+            Hostname::Domain(v) => v.to_string(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct HostnameParseError();
 

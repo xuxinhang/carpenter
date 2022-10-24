@@ -1,7 +1,8 @@
 pub mod event_loop;
-pub mod proxy_http;
+// pub mod proxy_http;
 pub mod http_header_parser;
 pub mod transformer;
+pub mod server;
 pub mod configuration;
 pub mod proxy_client;
 pub mod common;
@@ -111,7 +112,7 @@ fn start_proxy_server(el: &mut EventLoop) -> usize {
         let http_server_addr = &global_config.core.inbound_http_listen; // "0.0.0.0:7890";
         match http_server_addr.parse() {
             Ok(addr) => {
-                let result = proxy_http::HttpProxyServer::new(addr);
+                let result = server::http_server::HttpProxyServer::new(addr);
                 if result.is_ok() {
                     let http_server = result.unwrap();
                     match http_server.initial_register(el) {

@@ -5,11 +5,25 @@ use mio::{Events, Interest, Poll, Token};
 use mio::event::{Event, Source};
 
 
+pub struct EventTokenPool {
+    next_token: Token,
+}
+
+impl EventTokenPool {
+    pub fn get(&mut self) -> Token {
+        let t = self.next_token;
+        self.next_token = Token(self.next_token.0 + 1);
+        return t;
+    }
+}
+
+
 pub trait EventHandler {
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
     fn register(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
 }
+
 
 pub struct EventRegistryIntf(usize, Token, Interest);
 
@@ -71,6 +85,7 @@ pub struct EventLoop {
     events: Events,
     handlers: HashMap<Token, Vec<(Interest, Box<dyn EventHandler>)>>,
     registry_intf: EventRegistryIntf,
+    pub token: EventTokenPool,
 }
 
 impl EventLoop {
@@ -80,6 +95,7 @@ impl EventLoop {
             events: Events::with_capacity(event_capacity),
             handlers: HashMap::new(),
             registry_intf: EventRegistryIntf(0, Token(0), Interest::READABLE),
+            token: EventTokenPool { next_token: Token(256) },
         };
         this.registry_intf.0 = (&mut this.registry_intf as *mut _ as usize) - (&mut this as *mut _ as usize);
         Ok(this)
