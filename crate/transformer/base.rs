@@ -20,10 +20,12 @@ pub trait Transformer {
     fn receive_readable(&self) -> TransformerPortState;
 }
 
+#[derive(Debug)]
 pub enum TransformerResult {
     Ok(usize),
     IoError(std::io::Error),
     ProtocolError(rustls::Error),
+    CustomError(&'static str, Option<String>),
 }
 
 pub enum TransformerPortState {

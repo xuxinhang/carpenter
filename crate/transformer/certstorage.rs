@@ -39,8 +39,6 @@ fn get_cert_file_by_hostname(host_name: &Hostname) -> io::Result<(String, String
     let csr_file_name = format!("{}{}", file_path_prefix, csr_file_name);
     let cfg_file_name = format!("{}{}", file_path_prefix, cfg_file_name);
 
-    println!("{:?} {} {}", crt_file_name, csr_file_name, cfg_file_name);
-
     // create new cert if need
     let cfg_tmpl_name = String::from("config/sub_cert_conf_tmpl.txt");
     let key_file_name = format!("_certs/root.key.pem");
@@ -87,7 +85,6 @@ fn get_cert_file_by_hostname(host_name: &Hostname) -> io::Result<(String, String
 
 pub fn get_cert_data_by_hostname(host_name: &Hostname) -> io::Result<(Vec<rustls::Certificate>, rustls::PrivateKey)> {
     let (cert_filename, pkey_filename) = get_cert_file_by_hostname(host_name)?;
-    println!("{:?} {}", cert_filename, pkey_filename);
     let cert_data = crate::common::load_tls_certificate(&cert_filename)?;
     let pkey_data = crate::common::load_tls_private_key(&pkey_filename)?;
     Ok((cert_data, pkey_data))

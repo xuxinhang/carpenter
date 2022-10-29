@@ -5,6 +5,8 @@ sina.cn:443   +sni _
 
 wikipedia.org:443  +sni _
 *.wikipedia.org:443  +sni _
+wiki*.org:443 +sni _
+*.wiki*.org:443 +sni _
 
 gist.github.com:443  +sni github.com
 

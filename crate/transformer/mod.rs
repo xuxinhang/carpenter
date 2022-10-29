@@ -5,6 +5,7 @@ pub mod certstorage;
 pub mod direct;
 pub mod sniomit;
 pub mod directconnect;
+pub mod httpforward;
 pub mod sni;
 
 

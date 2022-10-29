@@ -10,6 +10,7 @@ use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{Transformer, TransformerPortState, TransformerResult};
 use crate::transformer::directconnect::{DirectConnectionTransformer};
 use crate::transformer::sni::{SniRewriterTransformer};
+use crate::transformer::httpforward::{HttpForwardTransformer};
 use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
 use crate::dnsresolver::{DnsResolveCallback};
 use crate::configuration::{TransformerAction};
@@ -85,8 +86,14 @@ struct ShakingZeroTunnel {
 }
 
 struct ShakingHalfTunnel {
+    tunnel_meta: TunnelMeta,
     token: Token,
     conn: TcpStream,
+}
+
+struct TunnelMeta {
+    _host: (String, u16),
+    http_tunnel_mode: bool,
 }
 
 
@@ -101,6 +108,9 @@ impl EventHandler for ClientRequestHandler {
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
         if event.is_readable() {
+            wd_log::log_debug_ln!("ClientRequestHandler # Coming client request.");
+            // TODO: Reuse previous connection.
+
             let conn = &mut self.tunnel.conn;
             let mut msg_buf = vec![0u8; 4*1024*1024];
             let r = conn.peek(&mut msg_buf);
@@ -108,8 +118,6 @@ impl EventHandler for ClientRequestHandler {
                 wd_log::log_error_ln!("ProxyRequestHandler # peek error. {:?}", e);
                 return;
             }
-            let mut trash = vec![0u8; r.unwrap()];
-            conn.read(&mut trash).unwrap();
 
             let x = parse_request_message(&msg_buf);
             if let Err(ref e) = x {
@@ -120,12 +128,21 @@ impl EventHandler for ClientRequestHandler {
                 }
                 return;
             }
-            let (_, remote_hostname_string, remote_port) = x.unwrap();
+            let (use_http_tunnel_mode, remote_hostname_string, remote_port) = x.unwrap();
+
+            if use_http_tunnel_mode {
+                let mut trash = vec![0u8; r.unwrap()];
+                conn.read(&mut trash).unwrap();
+            }
 
             // This tunnel is now Shaking-Half
             let next_tunnel = ShakingHalfTunnel {
                 token: self.tunnel.token,
                 conn: self.tunnel.conn,
+                tunnel_meta: TunnelMeta {
+                    _host: (remote_hostname_string.clone(), remote_port),
+                    http_tunnel_mode: use_http_tunnel_mode,
+                }
             };
 
             // Launch DNS querier
@@ -161,7 +178,12 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
         wd_log::log_info_ln!("DNS Query result for \"{:?}\" is \"{}\"",
             remote_hostname, remote_addr);
 
-        let transformer_box = create_transformer(&remote_hostname, remote_port).unwrap();
+        let transformer_box = if self.tunnel.tunnel_meta.http_tunnel_mode {
+            create_transformer(&remote_hostname, remote_port).unwrap()
+        } else {
+            Box::new(HttpForwardTransformer::new())
+        };
+
         let client_box = create_tunnel_client(remote_addr, remote_port).unwrap();
 
         let x = client_box.connect(
@@ -192,7 +214,8 @@ impl ProxyClientReadyCall for ClientConnectCallback {
         let next_tunnel = EstablishedTunnel::new(
             self.tunnel.token, self.tunnel.conn,
             event_loop.token.get(), peer_source,
-            self.transformer);
+            self.transformer,
+            self.tunnel.tunnel_meta);
         let next_handler = ProxyServerResponseHandler {
             tunnel: next_tunnel,
         };
@@ -220,11 +243,14 @@ impl EventHandler for ProxyServerResponseHandler {
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
         if event.is_writable() {
-            let message = "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes();
-            let conn = &mut self.tunnel.local_conn;
-            if let Err(e) = conn.write(message) {
-                wd_log::log_warn_ln!("ProxyServerResponseHandler # fail to write {:?}", e);
-                return;
+            // response 200 if using http tunnel
+            if self.tunnel.tunnel_meta.http_tunnel_mode {
+                let message = "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes();
+                let conn = &mut self.tunnel.local_conn;
+                if let Err(e) = conn.write(message) {
+                    wd_log::log_warn_ln!("ProxyServerResponseHandler # fail to write {:?}", e);
+                    return;
+                }
             }
 
             let tunnel_ptr = Rc::new(RefCell::new(self.tunnel));
@@ -258,6 +284,8 @@ impl EventHandler for ProxyServerResponseHandler {
 enum ConnStatus { Available, Block, Shutdown, Error }
 
 struct EstablishedTunnel {
+    tunnel_meta: TunnelMeta,
+    //
     local_token: Token,
     local_conn: TcpStream,
     remote_token: Token,
@@ -287,8 +315,10 @@ impl EstablishedTunnel {
         remote_token: Token,
         remote_conn: TcpStream,
         transformer: Box<dyn Transformer>,
+        tunnel_meta: TunnelMeta,
     ) -> Self {
         Self {
+            tunnel_meta,
             local_token, local_conn, remote_token, remote_conn, transformer,
             local_rbuf: Vec::with_capacity(32 * 1024),
             local_wbuf: Vec::with_capacity(32 * 1024),
@@ -326,7 +356,6 @@ impl EstablishedTunnel {
             let conn = &mut self.local_conn;
             let sta = &mut self.local_conn_rsta;
             let peer_sta = &self.remote_conn_wsta;
-            // println!("Transfer START: local_conn.read => transformer.transmit_writable");
             loop {
                 if *peer_sta == ConnStatus::Shutdown {
                     let r = conn.shutdown(Shutdown::Read);
@@ -354,7 +383,7 @@ impl EstablishedTunnel {
                             Ok(0) => {
                                 *sta = ConnStatus::Shutdown;
                                 buf.resize(0, 0);
-                                wd_log::log_debug_ln!("localconn read {:?}", 0);
+                                wd_log::log_debug_ln!("localconn read {:?} (shutdown)", 0);
                             }
                             Ok(s) => {
                                 *sta = ConnStatus::Available;
@@ -387,22 +416,16 @@ impl EstablishedTunnel {
                         wd_log::log_debug_ln!("transformer transmit_write Ok {} {:?}", s, buf[0]);
                         buf.drain(0..s);
                     }
-                    TransformerResult::IoError(_e) => {
+                    e => {
                         is_crash_required += 1;
-                        wd_log::log_debug_ln!("transformer transmit_write IoError");
-                        break;
-                    }
-                    TransformerResult::ProtocolError(_e) => {
-                        is_crash_required += 1;
-                        wd_log::log_debug_ln!("transformer transmit_write ProtocolError");
+                        wd_log::log_debug_ln!("transformer transmit_write Error: {:?}", e);
                         break;
                     }
                 }
 
-                is_transfer_active += 1;
+                is_transfer_active |= 1;
             }
 
-            // println!("Transfer START: remote_conn.read => transformer.receive_writable");
             // Copy: remote_conn.read => transformer.receive_writable
             let buf = &mut self.remote_rbuf;
             let conn = &mut self.remote_conn;
@@ -435,7 +458,7 @@ impl EstablishedTunnel {
                             Ok(0) => {
                                 *sta = ConnStatus::Shutdown;
                                 buf.resize(0, 0);
-                                wd_log::log_debug_ln!("remoteconn read Ok {:?}", 0);
+                                wd_log::log_debug_ln!("remoteconn read Ok {:?} (shutdown)", 0);
                             }
                             Ok(s) => {
                                 *sta = ConnStatus::Available;
@@ -466,24 +489,17 @@ impl EstablishedTunnel {
                     TransformerResult::Ok(s) => {
                         buf.drain(0..s);
                         wd_log::log_debug_ln!("transformer receive_write Ok {}", s);
-
                     }
-                    TransformerResult::IoError(_e) => {
+                    e => {
                         is_crash_required += 1;
-                        wd_log::log_debug_ln!("transformer receive_write IoError");
-                        break;
-                    }
-                    TransformerResult::ProtocolError(_e) => {
-                        is_crash_required += 1;
-                        wd_log::log_debug_ln!("transformer receive_write ProtocolError {:?}", _e);
+                        wd_log::log_debug_ln!("transformer transmit_write Error: {:?}", e);
                         break;
                     }
                 }
 
-                is_transfer_active += 1;
+                is_transfer_active |= 1;
             }
 
-            // println!("Transfer START: transformer.transmit_readable => remote_conn.write");
             // Copy: transformer.transmit_readable => remote_conn.write
             let buf = &mut self.remote_wbuf;
             let conn = &mut self.remote_conn;
@@ -523,7 +539,7 @@ impl EstablishedTunnel {
                     }
                     Err(ref e) if would_block(e) => {
                         *sta = ConnStatus::Block;
-                        requested_handlers |= CONN_EVT_LOCAL_W;
+                        requested_handlers |= CONN_EVT_REMOTE_W;
                         wd_log::log_debug_ln!("remoteconn write Block");
                         break;
                     }
@@ -534,10 +550,9 @@ impl EstablishedTunnel {
                     }
                 }
 
-                is_transfer_active += 1;
+                is_transfer_active |= 1;
             }
 
-            // println!("Transfer START: transformer.receive_readable => local_conn.write");
             // Copy: transformer.receive_readable => local_conn.write
             let buf = &mut self.local_wbuf;
             let conn = &mut self.local_conn;
@@ -588,12 +603,12 @@ impl EstablishedTunnel {
                     }
                 }
 
-                is_transfer_active += 1;
+                is_transfer_active |= 1;
             }
 
             // crash if required
             if is_crash_required != 0 {
-                wd_log::log_debug_ln!("crash tunnel");
+                wd_log::log_debug_ln!("crashing tunnel");
                 self.crash_tunnel();
                 return 0;
             }
@@ -764,19 +779,25 @@ fn parse_request_message(msg_buf: &[u8]) -> std::result::Result<(bool, String, u
 
     let (_header_length, msg_header_map, _) = x.unwrap();
 
-    if msg_header_map[":method"].as_str() == "CONNECT" {
-        let host = &msg_header_map[":path"];
-        let r = host.rsplit_once(':')
-            .and_then(|x| Some(x.0).zip(x.1.parse().ok()));
-        if r.is_none() {
-            return Err(format!("invalid request host: {}", host));
-        }
-        let (hostname, port) = r.unwrap();
-        return Ok((true, hostname.to_string(), port));
+    let use_http_tunnel_mode = msg_header_map[":method"].as_str() == "CONNECT";
+
+    let host_str: &str = if use_http_tunnel_mode {
+        &msg_header_map[":path"]
     } else {
-        let _path = &msg_header_map[":path"];
-        return Err("Unsupported message ".to_string());
-    }
+        let path_str = &msg_header_map[":path"];
+        let pos_l = path_str.find("http://");
+        if pos_l.is_none() {
+            return Err(format!("invalid request host: {}", path_str));
+        }
+        let pos_l = pos_l.unwrap() + 7;
+        let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
+        &path_str[pos_l..pos_r]
+    };
+
+    let r = host_str.rsplit_once(':').unwrap_or((host_str, "80"));
+    let (hostname_str, port) = Some(r).and_then(|x| Some(x.0).zip(x.1.parse().ok())).unwrap();
+
+    Ok((use_http_tunnel_mode, hostname_str.to_string(), port))
 }
 
 fn create_transformer(hostname: &Hostname, port: u16) -> Result<Box<dyn Transformer>> {
