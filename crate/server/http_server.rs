@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::io;
 use std::io::{Read, Write, Result};
 use std::rc::Rc;
@@ -16,7 +17,7 @@ use crate::dnsresolver::{DnsResolveCallback};
 use crate::configuration::{TransformerAction};
 use crate::http_header_parser::parse_http_header;
 use crate::dnsresolver::DnsQueier;
-use crate::common::Hostname;
+use crate::common::{Hostname, HostAddr};
 
 
 
@@ -92,7 +93,7 @@ struct ShakingHalfTunnel {
 }
 
 struct TunnelMeta {
-    _host: (String, u16),
+    _host: HostAddr,
     http_tunnel_mode: bool,
 }
 
@@ -112,26 +113,58 @@ impl EventHandler for ClientRequestHandler {
             // TODO: Reuse previous connection.
 
             let conn = &mut self.tunnel.conn;
-            let mut msg_buf = vec![0u8; 4*1024*1024];
-            let r = conn.peek(&mut msg_buf);
-            if let Err(e) = r {
-                wd_log::log_error_ln!("ProxyRequestHandler # peek error. {:?}", e);
-                return;
-            }
-
-            let x = parse_request_message(&msg_buf);
-            if let Err(ref e) = x {
-                wd_log::log_error_ln!("ClientRequestHandler # {}", e);
+            let shutdown_conn = || {
                 let r = conn.shutdown(Shutdown::Both);
                 if let Err(e) = r {
                     wd_log::log_warn_ln!("Fail to shutdown local conn {}", e);
                 }
+            };
+
+            let mut msg_buf = vec![0u8; 4*1024*1024];
+            let r = conn.peek(&mut msg_buf);
+            if let Err(e) = r {
+                wd_log::log_error_ln!("ProxyRequestHandler # peek error. {:?}", e);
+                shutdown_conn();
                 return;
             }
-            let (use_http_tunnel_mode, remote_hostname_string, remote_port) = x.unwrap();
 
+            // Parse http message to pick useful information
+            let r = parse_http_header(msg_buf.as_slice());
+            if r.is_none() {
+                wd_log::log_warn_ln!("Invalid http message.");
+                shutdown_conn();
+                return;
+            }
+            let (msg_header_length, msg_header_map, _) = r.unwrap();
+            let use_http_tunnel_mode = msg_header_map[":method"].as_str() == "CONNECT";
+            let host_str: &str = if use_http_tunnel_mode {
+                &msg_header_map[":path"]
+            } else {
+                let path_str = &msg_header_map[":path"];
+                let scheme_prefix = "http://";
+                let pos_l = path_str.find(scheme_prefix);
+                if pos_l.is_none() {
+                    wd_log::log_warn_ln!("Invalid request path, only http supported: {}", path_str);
+                    shutdown_conn();
+                    return;
+                }
+                let pos_l = pos_l.unwrap() + scheme_prefix.len();
+                let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
+                &path_str[pos_l..pos_r]
+            };
+
+            // Get Hostname from the string
+            let r = HostAddr::from_str(host_str);
+            if r.is_err() {
+                wd_log::log_warn_ln!("ClientRequestHandler # Invalid host {}", host_str);
+                shutdown_conn();
+                return;
+            }
+            let remote_host = r.unwrap();
+
+            // Drop this CONNECT message if using http tunnel mode
             if use_http_tunnel_mode {
-                let mut trash = vec![0u8; r.unwrap()];
+                let mut trash = vec![0u8; msg_header_length];
                 conn.read(&mut trash).unwrap();
             }
 
@@ -140,7 +173,7 @@ impl EventHandler for ClientRequestHandler {
                 token: self.tunnel.token,
                 conn: self.tunnel.conn,
                 tunnel_meta: TunnelMeta {
-                    _host: (remote_hostname_string.clone(), remote_port),
+                    _host: remote_host.clone(),
                     http_tunnel_mode: use_http_tunnel_mode,
                 }
             };
@@ -148,10 +181,9 @@ impl EventHandler for ClientRequestHandler {
             // Launch DNS querier
             let query_callback = Box::new(ProxyQueryDoneCallback {
                 tunnel: next_tunnel,
-                remote_hostname: convert_str_to_hostname(&remote_hostname_string),
-                remote_port: remote_port,
+                remote_host: remote_host.clone(),
             });
-            let querier = DnsQueier::new(&remote_hostname_string);
+            let querier = DnsQueier::new(remote_host.0.clone());
             querier.query(query_callback, event_loop);
         }
     }
@@ -161,30 +193,29 @@ impl EventHandler for ClientRequestHandler {
 
 struct ProxyQueryDoneCallback {
     tunnel: ShakingHalfTunnel,
-    remote_hostname: Hostname,
-    remote_port: u16,
+    remote_host: HostAddr,
 }
 
 impl DnsResolveCallback for ProxyQueryDoneCallback {
     fn ready(self: Box<Self>, addr: Option<IpAddr>, event_loop: &mut EventLoop) {
         if addr.is_none() {
-            wd_log::log_warn_ln!("ProxyQueryDoneHandler # Fail to resolve host {:?}", self.remote_hostname);
+            wd_log::log_warn_ln!("ProxyQueryDoneHandler # Fail to resolve host {:?}", &self.remote_host);
             return;
         }
 
-        let remote_addr = addr.unwrap();
-        let remote_port = self.remote_port;
-        let remote_hostname = self.remote_hostname;
-        wd_log::log_info_ln!("DNS Query result for \"{:?}\" is \"{}\"",
-            remote_hostname, remote_addr);
+        let remote_ipaddr = addr.unwrap();
+        let _remote_port = self.remote_host.1;
+        let remote_hostname = self.remote_host.0.clone();
+        wd_log::log_info_ln!("DNS Query result for \"{:?}\" is \"{:?}\"",
+            remote_hostname, remote_ipaddr);
 
         let transformer_box = if self.tunnel.tunnel_meta.http_tunnel_mode {
-            create_transformer(&remote_hostname, remote_port).unwrap()
+            create_transformer(&self.remote_host).unwrap()
         } else {
             Box::new(HttpForwardTransformer::new())
         };
 
-        let client_box = create_tunnel_client(remote_addr, remote_port).unwrap();
+        let client_box = create_tunnel_client(&self.remote_host, remote_ipaddr).unwrap();
 
         let x = client_box.connect(
             event_loop.token.get(),
@@ -760,60 +791,27 @@ impl EventHandler for EstablishedTunnelLocalWritableHandler {
 }
 
 
-
-fn convert_str_to_hostname(s: &str) -> Hostname {
-    if let Ok(v) = s.parse() {
-        Hostname::Addr6(v)
-    } else if let Ok(v) = s.parse() {
-        Hostname::Addr4(v)
-    } else {
-        Hostname::Domain(s.to_string())
-    }
-}
-
-fn parse_request_message(msg_buf: &[u8]) -> std::result::Result<(bool, String, u16), String> {
-    let x = parse_http_header(msg_buf);
-    if x.is_none() {
-        return Err("Invalid HTTP message".to_string());
-    }
-
-    let (_header_length, msg_header_map, _) = x.unwrap();
-
-    let use_http_tunnel_mode = msg_header_map[":method"].as_str() == "CONNECT";
-
-    let host_str: &str = if use_http_tunnel_mode {
-        &msg_header_map[":path"]
-    } else {
-        let path_str = &msg_header_map[":path"];
-        let pos_l = path_str.find("http://");
-        if pos_l.is_none() {
-            return Err(format!("invalid request host: {}", path_str));
-        }
-        let pos_l = pos_l.unwrap() + 7;
-        let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
-        &path_str[pos_l..pos_r]
-    };
-
-    let r = host_str.rsplit_once(':').unwrap_or((host_str, "80"));
-    let (hostname_str, port) = Some(r).and_then(|x| Some(x.0).zip(x.1.parse().ok())).unwrap();
-
-    Ok((use_http_tunnel_mode, hostname_str.to_string(), port))
-}
-
-fn create_transformer(hostname: &Hostname, port: u16) -> Result<Box<dyn Transformer>> {
+fn create_transformer(host: &HostAddr) -> Result<Box<dyn Transformer>> {
     let global_config = crate::global::get_global_config();
-    let transformer_config = global_config.transformer_matcher.get(port, hostname.to_string().as_str());
+    let transformer_config = global_config.get_transformer_action_by_host(host);
 
     let transformer_box: Box<dyn Transformer> = match transformer_config {
         Some(TransformerAction::SniTransformer(s)) => {
             let sni_name = match s.as_str() {
                 "_" => None,
-                "*" => Some(hostname.clone()),
-                hst => Some(convert_str_to_hostname(hst)),
+                "*" => Some(host.0.clone()),
+                h => {
+                    if let Ok(x) = Hostname::from_str(h) {
+                        Some(x)
+                    } else {
+                        wd_log::log_warn_ln!("Invalid hostname {}", h);
+                        Some(host.0.clone())
+                    }
+                }
             };
             wd_log::log_info_ln!("Use transformer: SNI Rewritter \"{}\"",
                 if let Some(ref v) = sni_name { v.to_string() } else { "<omitted>".to_string() });
-            let transformer = SniRewriterTransformer::new("", sni_name, hostname.clone());
+            let transformer = SniRewriterTransformer::new("", sni_name, host.0.clone());
             if let Err(e) = transformer {
                 wd_log::log_info_ln!("ProxyQueryDoneCallback # SniRewriterTransformer::new {:?}", e);
                 return Err(e);
@@ -830,8 +828,8 @@ fn create_transformer(hostname: &Hostname, port: u16) -> Result<Box<dyn Transfor
 }
 
 
-fn create_tunnel_client(remote_addr: IpAddr, remote_port: u16) -> Result<Box<ProxyClientDirect>> {
-    let mut socket_addr = (remote_addr, remote_port).to_socket_addrs().unwrap();
+fn create_tunnel_client(host: &HostAddr, ipaddr: IpAddr) -> Result<Box<ProxyClientDirect>> {
+    let mut socket_addr = (ipaddr, host.1).to_socket_addrs().unwrap();
 
     // if true {
     let proxy_client = ProxyClientDirect::new(socket_addr.next().unwrap());

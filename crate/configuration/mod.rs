@@ -4,13 +4,14 @@ use std::io::{BufRead, BufReader, Read};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use crate::uri_match::{HostMatchTree, HostnameMatchTree};
+use crate::uri_match::{HostMatchTree};
+use crate::common::{Hostname, HostAddr};
 
 
 /* System initialize */
 pub struct GlobalConfiguration {
     pub transformer_matcher: HostMatchTree<TransformerAction>,
-    pub querier_matcher: HostnameMatchTree<QuerierAction>,
+    pub querier_matcher: HostMatchTree<QuerierAction>,
     pub core: CoreConfig,
 }
 
@@ -27,18 +28,20 @@ pub fn load_default_configuration() -> GlobalConfiguration {
     let reader = BufReader::new(fs::File::open(file_name).unwrap());
     let transformer_matcher = parse_transformer_matcher(reader);
 
-    // load querier matcher
-    let mut tree = HostnameMatchTree::new();
+    // load querier matcher from system's host file
+    let mut tree = HostMatchTree::new();
     if core_cfg.dns_load_local_host_file {
         if let Some(file_path) = get_hosts_file_path() {
             let par = HostsFileParser::new(BufReader::new(fs::File::open(file_path).unwrap()));
             for (ip, domains) in par {
                 for d in domains.iter() {
-                    tree.insert(d, QuerierAction::To(ip.clone()))
+                    tree.insert(0, d, QuerierAction::To(ip.clone()))
                 }
             }
         }
     }
+
+    // load querier matcher from configuration file
     let file_name = "./config/querier_matcher.txt";
     let reader = BufReader::new(fs::File::open(file_name).unwrap());
     parse_querier_matcher(&mut tree, reader);
@@ -49,6 +52,20 @@ pub fn load_default_configuration() -> GlobalConfiguration {
         transformer_matcher: transformer_matcher,
         querier_matcher: querier_matcher,
         core: core_cfg,
+    }
+}
+
+impl GlobalConfiguration {
+    pub fn get_transformer_action_by_host(&self, host: &HostAddr) -> Option<TransformerAction> {
+        match host.0 {
+            Hostname::Domain(ref s) => {
+                self.transformer_matcher.get(host.1, s)
+            }
+            _ => None,
+        }
+    }
+    pub fn get_querier_action_by_domain_name(&self, domain_name: &str) -> Option<QuerierAction> {
+        self.querier_matcher.get(0, domain_name)
     }
 }
 
@@ -118,7 +135,7 @@ pub enum QuerierAction {
     Dns(String),
 }
 
-fn parse_querier_matcher(tree: &mut HostnameMatchTree<QuerierAction>, reader: impl BufRead) {
+fn parse_querier_matcher(tree: &mut HostMatchTree<QuerierAction>, reader: impl BufRead) {
     for line in reader.lines() {
         let line = line.unwrap();
         if !is_matcher_config_file_line_valid(&line) {
@@ -139,7 +156,7 @@ fn parse_querier_matcher(tree: &mut HostnameMatchTree<QuerierAction>, reader: im
             }
         };
 
-        tree.insert(hostname_str, action);
+        tree.insert(0, hostname_str, action);
     }
 }
 

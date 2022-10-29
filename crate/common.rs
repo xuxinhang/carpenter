@@ -1,6 +1,23 @@
 use std::io;
 use std::fs;
+use std::str::FromStr;
 
+
+#[derive(Clone, Debug)]
+pub struct HostAddr(pub Hostname, pub u16);
+
+// TODO
+#[derive(Clone, Debug)]
+pub struct HostParseError;
+
+impl FromStr for HostAddr {
+    type Err = HostParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let x = s.rsplit_once(':').unwrap_or((s, "80"));
+        Ok(Self(Hostname::from_str(x.0)?, x.1.parse().unwrap_or(80)))
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum Hostname {
@@ -19,39 +36,20 @@ impl ToString for Hostname {
     }
 }
 
-#[derive(Debug)]
-pub struct HostnameParseError();
+impl FromStr for Hostname {
+    type Err = HostParseError;
 
-impl std::str::FromStr for Hostname {
-    type Err = HostnameParseError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(ip_addr) = s.parse() {
-            return Ok(Hostname::Addr4(ip_addr));
-        } else if let Ok(ip_addr) = s.parse() {
-            return Ok(Hostname::Addr6(ip_addr));
-        } else if let Ok(domain) = s.parse() {
-            return Ok(Hostname::Domain(domain));
+        if let Ok(v) = s.parse() {
+            Ok(Hostname::Addr6(v))
+        } else if let Ok(v) = s.parse() {
+            Ok(Hostname::Addr4(v))
         } else {
-            return Err(HostnameParseError());
+            Ok(Hostname::Domain(s.to_string()))
+            // TODO: check whether a valid domain name
         }
     }
 }
-
-pub trait ToHostname {
-    fn to_hostname(&self) -> Result<Hostname, HostnameParseError>;
-}
-
-impl ToHostname for str {
-    fn to_hostname(&self) -> Result<Hostname, HostnameParseError> {
-        self.parse()
-    }
-}
-
-// impl ToHostname for Hostname {
-//     fn to_hostname(&self) -> Result<Hostname, HostnameParseError> {
-//         Ok(*self)
-//     }
-// }
 
 
 pub fn load_tls_certificate(file_path: &str) -> io::Result<Vec<rustls::Certificate>> {

@@ -2,6 +2,7 @@ use std::net::{IpAddr};
 use std::str::FromStr;
 use crate::event_loop::{EventLoop};
 use crate::configuration::{QuerierAction, DnsServerProtocol};
+use crate::common::{Hostname};
 
 
 mod utils;
@@ -37,12 +38,12 @@ pub trait DnsResolver {
 
 
 pub struct DnsQueier {
-    hostname: String,
+    hostname: Hostname,
 }
 
 impl DnsQueier {
-    pub fn new(hostname: &str) -> Self {
-        Self { hostname: String::from(hostname) }
+    pub fn new(hostname: Hostname) -> Self {
+        Self { hostname: hostname }
     }
 
     pub fn query_cache(&self, hostname: &str) -> Option<IpAddr> {
@@ -57,11 +58,30 @@ impl DnsQueier {
     ) -> Option<IpAddr> {
         let global_config = crate::global::get_global_config();
 
-        let hostname = self.hostname.as_str();
-        if let Some(x) = self.query_cache(hostname) {
+        // Return itself directly if IpAddr
+        match self.hostname {
+            Hostname::Addr4(v) => {
+                let ipaddr = IpAddr::V4(v);
+                query_ready_callback.ready(Some(ipaddr), event_loop);
+                return Some(ipaddr);
+            }
+            Hostname::Addr6(v) => {
+                let ipaddr = IpAddr::V6(v);
+                query_ready_callback.ready(Some(ipaddr), event_loop);
+                return Some(ipaddr);
+            }
+            Hostname::Domain(_) => {}
+        }
+
+        // Lookup the cache first
+        if let Some(x) = self.query_cache(&self.hostname.to_string()) {
             query_ready_callback.ready(Some(x), event_loop);
             return Some(x);
         }
+
+        // Send query request to dns server
+        let domain_name = self.hostname.to_string();
+        let hostname = domain_name.as_str();
 
         let mut target_hostname = String::from(hostname);
         let mut target_loopdeepth = 0;
@@ -74,7 +94,7 @@ impl DnsQueier {
 
             target_loopdeepth += 1;
 
-            match global_config.querier_matcher.get(&target_hostname) {
+            match global_config.get_querier_action_by_domain_name(&target_hostname) {
                 Some(QuerierAction::To(t)) => {
                     wd_log::log_info_ln!("Querier (re-target) to {}", t);
                     target_hostname = t.to_string();

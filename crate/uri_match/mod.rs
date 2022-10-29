@@ -1,3 +1,3 @@
 pub mod tier;
 
-pub use tier::{TierTree, HostMatchTree, HostnameMatchTree};
+pub use tier::{TierTree, HostMatchTree};

@@ -51,7 +51,6 @@ impl SniRewriterTransformer {
         }
         let remote_tls_conf = std::sync::Arc::new(remote_tls_conf);
 
-        println!("e{:?} {:?}", new_sni, raw_sni);
         Ok(Self {
             local_tls: ServerConnection::new(local_tls_conf).unwrap(),
             remote_tls: ClientConnection::new(

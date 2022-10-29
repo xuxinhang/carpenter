@@ -32,10 +32,3 @@ pub enum TransformerPortState {
     Open(isize),
     Closed,
 }
-
-
-// enum HostName {
-//     Ipv4(std::net::Ipv4Addr),
-//     Ipv6(std::net::Ipv6Addr),
-//     DomainName(String),
-// }
