@@ -1,7 +1,9 @@
+use std::str::FromStr;
 use std::io::{Read, Write};
 use std::collections::{VecDeque};
 use super::{Transformer, TransformerPortState, TransformerResult};
 use super::streambuffer::StreamBuffer;
+use crate::common::{HostAddr};
 
 
 const HTTP_FORWARD_SCAN_POS_FIRST: u8 = 1;
@@ -14,16 +16,18 @@ pub struct HttpForwardTransformer {
     scan_pos: u8,
     body_len_remained: usize,
     process_buffer: VecDeque<u8>,
+    expected_host: HostAddr,
 }
 
 impl HttpForwardTransformer {
-    pub fn new() -> Self {
+    pub fn new(host: HostAddr) -> Self {
         Self {
             transmit_buf: StreamBuffer::new(),
             receive_buf: StreamBuffer::new(),
             scan_pos: HTTP_FORWARD_SCAN_POS_FIRST,
             body_len_remained: 0,
             process_buffer: VecDeque::with_capacity(32 * 1024),
+            expected_host: host,
         }
     }
 
@@ -58,6 +62,15 @@ impl HttpForwardTransformer {
                     }
                     let uri_r = uri_r.unwrap();
 
+                    let host = HostAddr::from_str(&text[uri_m..uri_r]);
+                    if host.ok().as_ref() != Some(&self.expected_host) {
+                        // If client send a http message with different target host, just
+                        // terminate this tunnel. I have not found a good way to cancel this
+                        // limitation without huge modification to code.
+                        wd_log::log_warn_ln!("another host request is found in http forward");
+                        return TransformerResult::CustomError("different target host", None);
+                    }
+
                     text.drain(uri_l..uri_r);
                     let byte_slice = text.as_bytes();
                     self.transmit_buf.write(byte_slice).unwrap();
@@ -87,12 +100,13 @@ impl HttpForwardTransformer {
 
                     let text: String = self.process_buffer.iter().take(line_len).map(|x| *x as char).collect();
                     if let Some(colon_pos) = text.find(':') {
-                        let field_name = &text[..colon_pos];
-                        let field_value = &text[(colon_pos + 1)..];
+                        let field_name = &text[..colon_pos].trim();
+                        let field_value = &text[(colon_pos + 1)..].trim();
 
-                        if field_name == "Content-Length" {
+                        if field_name == &"Content-Length" {
                             match field_value.parse() {
-                                Err(_) => return TransformerResult::CustomError("Invalid http path", None),
+                                Err(_) => return TransformerResult::CustomError(
+                                    "Invalid http header 'Content-Length'", None),
                                 Ok(n) => self.body_len_remained = n,
                             }
                         }
@@ -117,6 +131,7 @@ impl HttpForwardTransformer {
                     }
                     let s = self.transmit_buf.write(u).unwrap();
                     self.body_len_remained -= s;
+                    self.process_buffer.drain(..s);
                     byte_count += s;
                     continue;
                 }

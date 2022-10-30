@@ -3,7 +3,7 @@ use std::fs;
 use std::str::FromStr;
 
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct HostAddr(pub Hostname, pub u16);
 
 // TODO
@@ -19,7 +19,7 @@ impl FromStr for HostAddr {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Hostname {
     Addr4(std::net::Ipv4Addr),
     Addr6(std::net::Ipv6Addr),

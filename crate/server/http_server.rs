@@ -212,7 +212,7 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
         let transformer_box = if self.tunnel.tunnel_meta.http_tunnel_mode {
             create_transformer(&self.remote_host).unwrap()
         } else {
-            Box::new(HttpForwardTransformer::new())
+            Box::new(HttpForwardTransformer::new(self.remote_host.clone()))
         };
 
         let client_box = create_tunnel_client(&self.remote_host, remote_ipaddr).unwrap();
