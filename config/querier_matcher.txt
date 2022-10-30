@@ -2,23 +2,19 @@
 
 *.sina.cn +dns dot
 
-*.wikipedia.org +to 91.198.174.192
+..wikipedia.org +to 91.198.174.192
 # 103.102.166.224 208.80.153.224 91.198.174.192 185.15.58.224
 upload.wikimedia.org +to 208.80.153.240
 *.wiki*.org +to wikipedia.org
 
 gist.github.com +to github.com
 
-steamcommunity.com +dns secure
-*.steamcommunity.com +dns secure
+..steamcommunity.com +dns secure
 
-*.live.com +dns secure
-*.office.net +dns secure
-*.onedrive.com +dns secure
+..live.com +dns secure
+..office.net +dns secure
+..onedrive.com +dns secure
 
-web.archive.org +dns secure
-*.archive.org +dns secure
-archive.org +dns secure
+..archive.org +dns secure
 
-startpage.com +dns secure
-*.startpage.com +dns secure
+..startpage.com +dns secure

@@ -4,27 +4,22 @@ sina.cn:443   +sni _
 *.sina.cn:443 +sni *
 
 wikipedia.org:443  +sni _
-*.wikipedia.org:443  +sni _
+..wikipedia.org:443  +sni _
 wiki*.org:443 +sni _
 *.wiki*.org:443 +sni _
 
 gist.github.com:443  +sni github.com
 
-steampowered.com:443 +sni _
-*.steampowered.com:443 +sni _
-steamcommunity.com:443 +sni _
-*.steamcommunity.com:443 +sni _
+..steampowered.com:443 +sni _
+..steamcommunity.com:443 +sni _
 
-*.live.com:443  +sni _
+..live.com:443  +sni _
 
-imgur.com:443  +sni _
-*.imgur.com:443  +sni _
+..imgur.com:443  +sni _
 
-*.archive.org:443 +sni _
-archive.org:443 +sni _
+..archive.org:443 +sni _
 
-startpage.com:443 +sni _
-*.startpage.com:443 +sni _
+..startpage.com:443 +sni _
 
 
 
