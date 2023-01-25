@@ -1,17 +1,24 @@
 [env]
-openssl_path = "openssl"
+openssl_path = "D:\\msys64\\usr\\bin\\openssl.exe"
+
 
 [inbound-http]
 enable = true
 listen = "0.0.0.0:7890"
 
-[outbound]
+
+[outbound.fanq]
+enable = true
+origin = "http://127.0.0.1:7891"
+
 
 [log]
+
 
 [dns]
 cache-expiration = 7200
 load-local-host-file = true
+
 
 [dns-server]
 normal = "udp://223.5.5.5"

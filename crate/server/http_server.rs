@@ -6,13 +6,13 @@ use std::cell::RefCell;
 use mio::{Interest, Token};
 use mio::event::{Event};
 use mio::net::{TcpListener, TcpStream};
-use std::net::{SocketAddr, ToSocketAddrs, IpAddr, Shutdown};
+use std::net::{SocketAddr, IpAddr, Shutdown};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{Transformer, TransformerPortState, TransformerResult};
 use crate::transformer::directconnect::{DirectConnectionTransformer};
 use crate::transformer::sni::{SniRewriterTransformer};
 use crate::transformer::httpforward::{HttpForwardTransformer};
-use crate::proxy_client::{ProxyClientReadyCall, direct::ProxyClientDirect};
+use crate::proxy_client::{get_proxy_client, ProxyClientReadyCall};
 use crate::dnsresolver::{DnsResolveCallback};
 use crate::configuration::{TransformerAction};
 use crate::http_header_parser::parse_http_header;
@@ -204,7 +204,7 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
         }
 
         let remote_ipaddr = addr.unwrap();
-        let _remote_port = self.remote_host.1;
+        let remote_port = self.remote_host.1;
         let remote_hostname = self.remote_host.0.clone();
         wd_log::log_info_ln!("DNS Query result for \"{:?}\" is \"{:?}\"",
             remote_hostname, remote_ipaddr);
@@ -215,11 +215,21 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
             Box::new(HttpForwardTransformer::new(self.remote_host.clone()))
         };
 
-        let client_box = create_tunnel_client(&self.remote_host, remote_ipaddr).unwrap();
+        let client_box = get_proxy_client(&self.remote_host);
+        if client_box.is_err() {
+            wd_log::log_warn_ln!("ProxyQueryDoneHandler # get_proxy_client error");
+            return;
+        }
+        let (client_box, dns_resolve) = client_box.unwrap();
 
         let x = client_box.connect(
             event_loop.token.get(),
             event_loop,
+            if dns_resolve {
+                HostAddr::from(SocketAddr::from((remote_ipaddr, remote_port)))
+            } else {
+                self.remote_host.clone()
+            },
             Box::new(ClientConnectCallback {
                 tunnel: self.tunnel,
                 transformer: transformer_box,
@@ -826,13 +836,3 @@ fn create_transformer(host: &HostAddr) -> Result<Box<dyn Transformer>> {
 
     return Ok(transformer_box);
 }
-
-
-fn create_tunnel_client(host: &HostAddr, ipaddr: IpAddr) -> Result<Box<ProxyClientDirect>> {
-    let mut socket_addr = (ipaddr, host.1).to_socket_addrs().unwrap();
-
-    // if true {
-    let proxy_client = ProxyClientDirect::new(socket_addr.next().unwrap());
-    return Ok(Box::new(proxy_client));
-}
-

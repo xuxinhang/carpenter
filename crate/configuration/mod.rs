@@ -12,6 +12,7 @@ use crate::common::{Hostname, HostAddr};
 pub struct GlobalConfiguration {
     pub transformer_matcher: HostMatchTree<TransformerAction>,
     pub querier_matcher: HostMatchTree<QuerierAction>,
+    pub outbound_matcher: HostMatchTree<OutboundAction>,
     pub core: CoreConfig,
 }
 
@@ -47,10 +48,18 @@ pub fn load_default_configuration() -> GlobalConfiguration {
     parse_querier_matcher(&mut tree, reader);
     let querier_matcher = tree;
 
+    // load outbound matcher from configuration file
+    let mut tree = HostMatchTree::new();
+    let file_name = "./config/outbound_matcher.txt";
+    let reader = BufReader::new(fs::File::open(file_name).unwrap());
+    parse_outbound_matcher(&mut tree, reader);
+    let outbound_matcher = tree;
+
     // construct global configuration structure
     GlobalConfiguration {
         transformer_matcher: transformer_matcher,
         querier_matcher: querier_matcher,
+        outbound_matcher: outbound_matcher,
         core: core_cfg,
     }
 }
@@ -58,7 +67,7 @@ pub fn load_default_configuration() -> GlobalConfiguration {
 impl GlobalConfiguration {
     pub fn get_transformer_action_by_host(&self, host: &HostAddr) -> Option<TransformerAction> {
         match host.0 {
-            Hostname::Domain(ref s) => {
+            Hostname::Domain(ref s) => { // TODO
                 self.transformer_matcher.get(host.1, s)
             }
             _ => None,
@@ -66,6 +75,14 @@ impl GlobalConfiguration {
     }
     pub fn get_querier_action_by_domain_name(&self, domain_name: &str) -> Option<QuerierAction> {
         self.querier_matcher.get(0, domain_name)
+    }
+    pub fn get_outbound_action_by_host(&self, host: &HostAddr) -> Option<OutboundAction> {
+        match host.0 {
+            Hostname::Domain(ref s) => {
+                self.outbound_matcher.get(host.1, s)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -87,6 +104,24 @@ fn is_matcher_config_file_line_valid(s: &str) -> bool {
     }
     true
 }
+
+fn parse_matcher_line(line: &str) -> Option<(String, u16, String)> {
+    if !is_matcher_config_file_line_valid(line) {
+        return None;
+    }
+
+    let (host_str, prof_str) = line.split_once('+').unwrap_or((line, ""));
+    let host_str = String::from(host_str.trim());
+    let mut prof_str = String::from(prof_str.trim());
+    prof_str.push(' ');
+
+    let (hostname, port_str) = host_str.rsplit_once(':').unwrap_or((&host_str, "0"));
+    let port = port_str.parse().unwrap_or(0) as u16;
+    let hostname = hostname.trim();
+
+    return Some((hostname.to_string(), port, prof_str));
+}
+
 
 #[derive(Clone)]
 pub enum TransformerAction {
@@ -162,6 +197,39 @@ fn parse_querier_matcher(tree: &mut HostMatchTree<QuerierAction>, reader: impl B
 
 
 /**
+ * Outbound matcher config
+ */
+#[derive(Clone)]
+pub enum OutboundAction {
+    Direct,
+    Server(String),
+}
+
+fn parse_outbound_matcher(tree: &mut HostMatchTree<OutboundAction>, reader: impl BufRead) {
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if let Some((hostname_str, _port, action_str)) = parse_matcher_line(&line) {
+            let mut action_str = action_str.clone();
+            action_str.push_str(" ");
+            let (action_type_str, action_param_str) =
+                action_str.split_once(' ').unwrap_or((action_str.as_str(), ""));
+            let action_param_str = action_param_str.trim_start();
+            let action = match action_type_str {
+                "server" => OutboundAction::Server(action_param_str.trim().to_string()),
+                "direct" => OutboundAction::Direct,
+                _ => {
+                   wd_log::log_warn_ln!("Invalid outbound action. {}", action_type_str);
+                   continue;
+                }
+            };
+
+            tree.insert(0, &hostname_str, action);
+        }
+    }
+}
+
+
+/**
  * Program core config
  * which consists of many items
  */
@@ -169,6 +237,19 @@ fn parse_querier_matcher(tree: &mut HostMatchTree<QuerierAction>, reader: impl B
 pub enum DnsServerProtocol {
     Udp,
     Tls
+}
+
+#[derive(Debug)]
+pub enum OutboundServerProtocol {
+    Http,
+}
+
+#[derive(Debug)]
+pub struct OutboundServer {
+    pub protocol: OutboundServerProtocol,
+    pub addr: SocketAddr,
+    pub dns_resolve: bool,
+    // auth: None,
 }
 
 #[derive(Debug)]
@@ -180,6 +261,7 @@ pub struct CoreConfig {
     pub dns_cache_expiration: u32,
     pub dns_load_local_host_file: bool,
     pub dns_server: HashMap<String, (DnsServerProtocol, SocketAddr)>,
+    pub outbound_server: HashMap<String, OutboundServer>,
 }
 
 fn parse_core_config(cfg_str: &str) -> CoreConfig {
@@ -191,12 +273,13 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
         dns_cache_expiration: 7200,
         dns_load_local_host_file: true,
         dns_server: HashMap::new(),
+        outbound_server: HashMap::new(),
     };
 
     use toml::Value;
     let toml_root = cfg_str.parse::<Value>();
     if let Err(e) = toml_root {
-        println!("Fail to parse core.toml: {:?}", e);
+        wd_log::log_error_ln!("Fail to parse core.toml: {:?}", e);
         return cfg;
     }
     let toml_root = toml_root.unwrap();
@@ -210,13 +293,55 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
     }
 
     if let Some(t) = toml_root.get("inbound-http") {
-        let t = t.as_table().expect("inbound_http should be a table");
+        let t = t.as_table().expect("inbound-http should be a table");
         cfg.inbound_http_enable =
             t.get("enable").map(|x| x.as_bool()).flatten().unwrap_or(true);
         cfg.inbound_http_listen =
             t.get("listen").map(|x| x.as_str()).flatten().unwrap_or("0.0.0.0:7890").to_string();
     } else {
         cfg.inbound_http_enable = false;
+    }
+
+    if let Some(t) = toml_root.get("outbound") {
+        let t = t.as_table().expect("outbound should be a table");
+        for (n, u) in t.iter() {
+            let u = u.as_table().expect("expect a table");
+
+            let u_enable = u.get("enable").map_or(true, |x| x.as_bool().unwrap());
+            if !u_enable { continue; }
+
+            let u_origin = u.get("origin");
+            if u_origin.is_none() {
+                wd_log::log_warn_ln!("'origin' field is required for outbound server '{}'", n);
+                continue;
+            }
+            let u_origin = u_origin.unwrap().as_str().unwrap();
+
+            let u_dns_resolve = u.get("dns_resolve").map_or(false, |x| x.as_bool().unwrap());
+
+            if let Some((u_prot, u_addr)) = u_origin.split_once("://") {
+                let prot = match u_prot {
+                    "http" => OutboundServerProtocol::Http,
+                    _ => {
+                        wd_log::log_warn_ln!("Invalid protocol {}", u_prot);
+                        continue;
+                    }
+                };
+                let addr = SocketAddr::from_str(u_addr);
+                if addr.is_err() {
+                    wd_log::log_warn_ln!("Invalid origin {}", u_origin);
+                    continue;
+                }
+                cfg.outbound_server.insert(n.to_string(), OutboundServer {
+                    protocol: prot,
+                    addr: addr.unwrap(),
+                    dns_resolve: u_dns_resolve,
+                });
+            } else {
+                wd_log::log_warn_ln!("'origin' field is invalid '{}'", u_origin);
+                continue;
+            }
+        }
     }
 
     if let Some(t) = toml_root.get("log").map(|x| x.as_table()).flatten() {
@@ -245,7 +370,7 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
                     "udp" => DnsServerProtocol::Udp,
                     "tls" => DnsServerProtocol::Tls,
                     _ => {
-                        println!("unknown protocol name: {}", prot_str);
+                        wd_log::log_warn_ln!("unknown protocol name: {}", prot_str);
                         continue;
                     }
                 };

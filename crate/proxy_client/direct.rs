@@ -1,29 +1,33 @@
 use std::io;
 use std::time::{SystemTime, Duration};
-use std::net::{SocketAddr};
 use mio::{Token, Interest};
 use mio::net::{TcpStream};
 use mio::event::{Event};
+use super::{ProxyClient, ProxyClientReadyCall};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
-use crate::proxy_client::ProxyClientReadyCall;
+use crate::common::{HostAddr};
 
 
 pub struct ProxyClientDirect {
-    socket_addr: SocketAddr,
+    // nothing
 }
 
 impl ProxyClientDirect {
-    pub fn new(socket_addr: SocketAddr) -> Self {
-        Self { socket_addr }
+    pub fn new() -> Self {
+        Self {}
     }
+}
 
-    pub fn connect(
+impl ProxyClient for ProxyClientDirect {
+    fn connect(
         &self,
         token: Token,
         event_loop: &mut EventLoop,
+        tunnel_addr: HostAddr,
         readycall: Box<dyn ProxyClientReadyCall>,
     ) -> io::Result<()> {
-        let conn = TcpStream::connect(self.socket_addr)?;
+        let tunnel_socket_addr = tunnel_addr.clone().try_into();
+        let conn = TcpStream::connect(tunnel_socket_addr.unwrap())?;
         let next_handler = ClientShakingHandler {
             token, conn, readycall,
             timeout_systemtime: SystemTime::now().checked_add(Duration::from_secs(60)).unwrap(),

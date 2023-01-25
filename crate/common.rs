@@ -1,12 +1,33 @@
 use std::io;
 use std::fs;
 use std::str::FromStr;
+use std::net::{SocketAddr, IpAddr};
+use std::convert::{TryInto, From};
 
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostAddr(pub Hostname, pub u16);
 
-// TODO
+impl TryInto<SocketAddr> for HostAddr {
+    type Error = ();
+    fn try_into(self) -> Result<SocketAddr, Self::Error> {
+        match self.0 {
+            Hostname::Addr4(i) => Ok((i, self.1).into()),
+            Hostname::Addr6(i) => Ok((i, self.1).into()),
+            _ =>  Err(()),
+        }
+    }
+}
+
+impl From<SocketAddr> for HostAddr {
+    fn from(s: SocketAddr) -> Self {
+        match s.ip() {
+            IpAddr::V4(x) => HostAddr(Hostname::Addr4(x), s.port()),
+            IpAddr::V6(x) => HostAddr(Hostname::Addr6(x), s.port()),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HostParseError;
 
@@ -18,6 +39,13 @@ impl FromStr for HostAddr {
         Ok(Self(Hostname::from_str(x.0)?, x.1.parse().unwrap_or(80)))
     }
 }
+
+impl ToString for HostAddr {
+    fn to_string(&self) -> String {
+        self.0.to_string() + ":" + self.1.to_string().as_str()
+    }
+}
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Hostname {
