@@ -64,8 +64,6 @@ impl EventHandler for ClientConnectedHandler {
             match conn.peer_addr() {
                 Ok(_addr) => {
                     wd_log::log_debug_ln!("ClientConnectedHandler # peer connected. {}", _addr);
-                    // let tunnel_address_port = self.tunnel_addr.1;
-                    // let tunnel_address_hostname = self.tunnel_addr.0;
                     let mut http_message = format!("CONNECT {} HTTP/1.1\r\n", self.tunnel_addr.to_string());
                     http_message.push_str(concat!(
                         "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/109.0\r\n",

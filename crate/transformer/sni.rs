@@ -4,7 +4,7 @@ use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
 use super::streambuffer::StreamBuffer;
 use super::certstorage::get_cert_data_by_hostname;
 use super::{TransformerResult, TransformerPortState, Transformer};
-use crate::common::Hostname;
+use crate::common::HostName;
 
 const SINGLE_BRUST_SIZE_LIMIT: usize = 512 * 1024; // = 512 KB
 
@@ -16,7 +16,7 @@ pub struct SniRewriterTransformer {
 }
 
 impl SniRewriterTransformer {
-    pub fn new(_host_name_str: &str, new_sni: Option<Hostname>, raw_sni: Hostname) -> io::Result<Self> {
+    pub fn new(_host_name_str: &str, new_sni: Option<HostName>, raw_sni: HostName) -> io::Result<Self> {
         let host_name = raw_sni.clone();
 
         let (local_tls_cert_data, local_tls_pkey_data) =
@@ -231,12 +231,11 @@ impl Transformer for SniRewriterTransformer {
 
 
 
-fn convert_hostname_to_rustls_server_name(h: Hostname) -> rustls::client::ServerName {
+fn convert_hostname_to_rustls_server_name(h: HostName) -> rustls::client::ServerName {
     use rustls::client::ServerName;
     match h {
-        Hostname::Addr4(v) => ServerName::IpAddress(std::net::IpAddr::V4(v)),
-        Hostname::Addr6(v) => ServerName::IpAddress(std::net::IpAddr::V6(v)),
-        Hostname::Domain(v) => ServerName::try_from(v.as_str()).unwrap(),
+        HostName::IpAddress(v) => ServerName::IpAddress(v),
+        HostName::DomainName(v) => ServerName::try_from(v.as_str()).unwrap(),
     }
 }
 

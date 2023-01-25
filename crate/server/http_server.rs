@@ -1,6 +1,6 @@
 use std::str::FromStr;
 use std::io;
-use std::io::{Read, Write, Result};
+use std::io::{Read, Write};
 use std::rc::Rc;
 use std::cell::RefCell;
 use mio::{Interest, Token};
@@ -8,17 +8,13 @@ use mio::event::{Event};
 use mio::net::{TcpListener, TcpStream};
 use std::net::{SocketAddr, IpAddr, Shutdown};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
-use crate::transformer::{Transformer, TransformerPortState, TransformerResult};
-use crate::transformer::directconnect::{DirectConnectionTransformer};
-use crate::transformer::sni::{SniRewriterTransformer};
+use crate::transformer::{create_transformer, Transformer, TransformerPortState, TransformerResult};
 use crate::transformer::httpforward::{HttpForwardTransformer};
 use crate::proxy_client::{get_proxy_client, ProxyClientReadyCall};
 use crate::dnsresolver::{DnsResolveCallback};
-use crate::configuration::{TransformerAction};
 use crate::http_header_parser::parse_http_header;
 use crate::dnsresolver::DnsQueier;
-use crate::common::{Hostname, HostAddr};
-
+use crate::common::HostAddr;
 
 
 pub struct HttpProxyServer {
@@ -120,7 +116,7 @@ impl EventHandler for ClientRequestHandler {
                 }
             };
 
-            let mut msg_buf = vec![0u8; 4*1024*1024];
+            let mut msg_buf = vec![0u8; 32*1024];
             let r = conn.peek(&mut msg_buf);
             if let Err(e) = r {
                 wd_log::log_error_ln!("ProxyRequestHandler # peek error. {:?}", e);
@@ -128,39 +124,13 @@ impl EventHandler for ClientRequestHandler {
                 return;
             }
 
-            // Parse http message to pick useful information
-            let r = parse_http_header(msg_buf.as_slice());
-            if r.is_none() {
-                wd_log::log_warn_ln!("Invalid http message.");
+            let r = parse_http_proxy_message(&msg_buf);
+            if let Err(e) = r {
+                wd_log::log_warn_ln!("ClientRequestHandler # {}", e);
                 shutdown_conn();
                 return;
             }
-            let (msg_header_length, msg_header_map, _) = r.unwrap();
-            let use_http_tunnel_mode = msg_header_map[":method"].as_str() == "CONNECT";
-            let host_str: &str = if use_http_tunnel_mode {
-                &msg_header_map[":path"]
-            } else {
-                let path_str = &msg_header_map[":path"];
-                let scheme_prefix = "http://";
-                let pos_l = path_str.find(scheme_prefix);
-                if pos_l.is_none() {
-                    wd_log::log_warn_ln!("Invalid request path, only http supported: {}", path_str);
-                    shutdown_conn();
-                    return;
-                }
-                let pos_l = pos_l.unwrap() + scheme_prefix.len();
-                let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
-                &path_str[pos_l..pos_r]
-            };
-
-            // Get Hostname from the string
-            let r = HostAddr::from_str(host_str);
-            if r.is_err() {
-                wd_log::log_warn_ln!("ClientRequestHandler # Invalid host {}", host_str);
-                shutdown_conn();
-                return;
-            }
-            let remote_host = r.unwrap();
+            let (msg_header_length, remote_host, use_http_tunnel_mode) = r.unwrap();
 
             // Drop this CONNECT message if using http tunnel mode
             if use_http_tunnel_mode {
@@ -183,10 +153,42 @@ impl EventHandler for ClientRequestHandler {
                 tunnel: next_tunnel,
                 remote_host: remote_host.clone(),
             });
-            let querier = DnsQueier::new(remote_host.0.clone());
+            let querier = DnsQueier::new(remote_host.host());
             querier.query(query_callback, event_loop);
         }
     }
+}
+
+fn parse_http_proxy_message(msg_buf: &[u8]) -> Result<(usize, HostAddr, bool), String> {
+    // Parse http message to pick useful information
+    let r = parse_http_header(msg_buf);
+    if r.is_none() {
+        return Err("Invalid http message".to_string());
+    }
+    let (msg_header_length, msg_header_map, _) = r.unwrap();
+    let use_http_tunnel_mode = msg_header_map[":method"].as_str() == "CONNECT";
+    let host_str: &str = if use_http_tunnel_mode {
+        &msg_header_map[":path"]
+    } else {
+        let path_str = &msg_header_map[":path"];
+        let scheme_prefix = "http://";
+        let pos_l = path_str.find(scheme_prefix);
+        if pos_l.is_none() {
+            return Err(format!("Invalid request path, only http supported: {}", path_str));
+        }
+        let pos_l = pos_l.unwrap() + scheme_prefix.len();
+        let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
+        &path_str[pos_l..pos_r]
+    };
+
+    // Get hostname from the string
+    let r = HostAddr::from_str(host_str);
+    if r.is_err() {
+        return Err(format!("Invalid host {}", host_str));
+    }
+    let remote_host = r.unwrap();
+
+    Ok((msg_header_length, remote_host, use_http_tunnel_mode))
 }
 
 
@@ -204,8 +206,8 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
         }
 
         let remote_ipaddr = addr.unwrap();
-        let remote_port = self.remote_host.1;
-        let remote_hostname = self.remote_host.0.clone();
+        let remote_port = self.remote_host.port();
+        let remote_hostname = self.remote_host.host();
         wd_log::log_info_ln!("DNS Query result for \"{:?}\" is \"{:?}\"",
             remote_hostname, remote_ipaddr);
 
@@ -798,41 +800,4 @@ impl EventHandler for EstablishedTunnelLocalWritableHandler {
                 self.tunnel, event_loop, CONN_EVT_LOCAL_W);
         }
     }
-}
-
-
-fn create_transformer(host: &HostAddr) -> Result<Box<dyn Transformer>> {
-    let global_config = crate::global::get_global_config();
-    let transformer_config = global_config.get_transformer_action_by_host(host);
-
-    let transformer_box: Box<dyn Transformer> = match transformer_config {
-        Some(TransformerAction::SniTransformer(s)) => {
-            let sni_name = match s.as_str() {
-                "_" => None,
-                "*" => Some(host.0.clone()),
-                h => {
-                    if let Ok(x) = Hostname::from_str(h) {
-                        Some(x)
-                    } else {
-                        wd_log::log_warn_ln!("Invalid hostname {}", h);
-                        Some(host.0.clone())
-                    }
-                }
-            };
-            wd_log::log_info_ln!("Use transformer: SNI Rewritter \"{}\"",
-                if let Some(ref v) = sni_name { v.to_string() } else { "<omitted>".to_string() });
-            let transformer = SniRewriterTransformer::new("", sni_name, host.0.clone());
-            if let Err(e) = transformer {
-                wd_log::log_info_ln!("ProxyQueryDoneCallback # SniRewriterTransformer::new {:?}", e);
-                return Err(e);
-            }
-            Box::new(transformer.unwrap())
-        }
-        Some(TransformerAction::DirectTransformer) | None => {
-            wd_log::log_info_ln!("Use transformer: Direct");
-            Box::new(DirectConnectionTransformer::new())
-        }
-    };
-
-    return Ok(transformer_box);
 }

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use crate::uri_match::{HostMatchTree};
-use crate::common::{Hostname, HostAddr};
+use crate::common::{HostName, HostAddr};
 
 
 /* System initialize */
@@ -66,9 +66,9 @@ pub fn load_default_configuration() -> GlobalConfiguration {
 
 impl GlobalConfiguration {
     pub fn get_transformer_action_by_host(&self, host: &HostAddr) -> Option<TransformerAction> {
-        match host.0 {
-            Hostname::Domain(ref s) => { // TODO
-                self.transformer_matcher.get(host.1, s)
+        match host.host() {
+            HostName::DomainName(ref s) => { // TODO
+                self.transformer_matcher.get(host.port(), s)
             }
             _ => None,
         }
@@ -77,9 +77,9 @@ impl GlobalConfiguration {
         self.querier_matcher.get(0, domain_name)
     }
     pub fn get_outbound_action_by_host(&self, host: &HostAddr) -> Option<OutboundAction> {
-        match host.0 {
-            Hostname::Domain(ref s) => {
-                self.outbound_matcher.get(host.1, s)
+        match host.host() {
+            HostName::DomainName(ref s) => {
+                self.outbound_matcher.get(host.port(), s)
             }
             _ => None,
         }
