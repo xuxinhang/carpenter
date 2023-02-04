@@ -12,7 +12,9 @@ pub mod global;
 
 
 use std::rc::Rc;
-use event_loop::EventLoop;
+use crate::event_loop::EventLoop;
+use crate::configuration::InboundServerProtocol;
+use crate::server::ProxyServer;
 
 
 fn main() {
@@ -38,7 +40,10 @@ fn main() {
     // start server and event loop
     let mut el = EventLoop::new(1024).unwrap();
 
-    start_proxy_server(&mut el);
+    let server_count = start_proxy_server(&mut el);
+    if server_count == 0 {
+        println!("WARNING: NO ANY PROXY SERVER RUNNING!");
+    }
 
     match el.start_loop() {
         Ok(()) => {
@@ -107,36 +112,37 @@ fn check_and_prepare_root_certificate() -> std::io::Result<()> {
 fn start_proxy_server(el: &mut EventLoop) -> usize {
     let mut listen_count = 0;
     let global_config = crate::global::get_global_config();
+    let inbound_server_config = &global_config.core.inbound_server;
 
-    if global_config.core.inbound_http_enable {
-        let http_server_addr = &global_config.core.inbound_http_listen; // "0.0.0.0:7890";
-        match http_server_addr.parse() {
-            Ok(addr) => {
-                let result = server::http_server::HttpProxyServer::new(addr);
-                if result.is_ok() {
-                    let http_server = result.unwrap();
-                    match http_server.initial_register(el) {
-                        Ok(_) => {
-                            wd_log::log_info_ln!("HTTP proxy server started on {}", http_server_addr);
-                            listen_count += 1;
-                        }
-                        Err(e) => {
-                            println!("Http proxy server fail to listen on {} {:?}", http_server_addr, e);
-                        }
-                    }
+    for (key, cfg) in inbound_server_config.iter() {
+        let listen_addr = cfg.addr;
+        match cfg.protocol {
+            InboundServerProtocol::Http => {
+                let s = server::http_server::HttpProxyServer::new(listen_addr);
+                if let Err(e) = s {
+                    wd_log::log_error_ln!("Fail to create proxy server \"{}\": {:?}", key, e);
+                    continue;
+                }
+                let server = s.unwrap();
+                if let Err(e) = server.launch(el) {
+                    wd_log::log_error_ln!("Proxy server \"{}\" fail to listen on {}: {:?}", key, listen_addr, e);
                 } else {
-                    println!("Fail to create http proxy server.");
+                    wd_log::log_info_ln!("Proxy server \"{}\" running on {}", key, listen_addr);
+                    listen_count += 1;
                 }
             }
-            Err(e) => {
-                println!("Fail to create http proxy server.\n{:?}", e);
+            InboundServerProtocol::HttpOverTls => {
+                let server = server::https_server::ProxyServerHttpOverTls::new(listen_addr).unwrap();
+                if let Err(e) = server.launch(el) {
+                    wd_log::log_error_ln!("Proxy server \"{}\" fail to listen on {}: {:?}", key, listen_addr, e);
+                } else {
+                    wd_log::log_info_ln!("Proxy server \"{}\" running on {}", key, listen_addr);
+                    listen_count += 1;
+                }
             }
         }
     }
 
-    if listen_count == 0 {
-        println!("WARNING: NO ANY PROXY SERVER RUNNING!");
-    }
     listen_count
 }
 

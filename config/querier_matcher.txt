@@ -1,6 +1,6 @@
 * +dns normal
 
-*.sina.cn +dns dot
+#*.sina.cn +dns dot
 
 ..wikipedia.org +to 91.198.174.192
 # 103.102.166.224 208.80.153.224 91.198.174.192 185.15.58.224

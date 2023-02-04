@@ -48,14 +48,17 @@ impl FromStr for HostAddr {
                 let ip = s[1..i].parse().map_err(|_| HostParseError())?;
                 (HostName::IpAddress(ip), i+1)
             }
-            Some(x) if x.is_digit(10) => {
+            Some(_) => {
                 let i = s.find(':').unwrap_or(s.len());
-                let ip = s[0..i].parse().map_err(|_| HostParseError())?;
-                (HostName::IpAddress(ip), i)
+                let ip = s[0..i].parse();
+                if ip.is_err() {
+                    (HostName::DomainName(s[0..i].to_string()), i)
+                } else {
+                    (HostName::IpAddress(ip.unwrap()), i)
+                }
             }
             _ => {
-                let i = s.find(':').unwrap_or(s.len());
-                (HostName::DomainName(s[0..i].to_string()), i)
+                return Err(HostParseError());
             }
         };
         let p = match s.chars().nth(i) {

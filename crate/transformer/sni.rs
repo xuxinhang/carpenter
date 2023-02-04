@@ -20,7 +20,7 @@ impl SniRewriterTransformer {
         let host_name = raw_sni.clone();
 
         let (local_tls_cert_data, local_tls_pkey_data) =
-            get_cert_data_by_hostname(&host_name).unwrap(); // TODO
+            get_cert_data_by_hostname(Some(host_name.clone())).unwrap(); // TODO
 
         let local_tls_conf = std::sync::Arc::new(
             ServerConfig::builder()

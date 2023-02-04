@@ -2,9 +2,13 @@
 openssl_path = "D:\\msys64\\usr\\bin\\openssl.exe"
 
 
-[inbound-http]
+[inbound.normal]
 enable = true
-listen = "0.0.0.0:7890"
+listen = "http://0.0.0.0:7890"
+
+[inbound.secure]
+enable = true
+listen = "https://0.0.0.0:7899"
 
 
 [outbound.fanq]
@@ -13,6 +17,7 @@ origin = "http://127.0.0.1:7891"
 
 
 [log]
+level = 5
 
 
 [dns]

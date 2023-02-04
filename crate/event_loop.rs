@@ -103,13 +103,19 @@ impl EventLoop {
 
     pub fn register(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
         hdlr.as_mut().register(&mut self.registry_intf)?;
-        self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
+        // self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
+        let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
+        hdlr_vec.clear();
+        hdlr_vec.push((self.registry_intf.2, hdlr));
         Ok(())
     }
 
     pub fn reregister(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
         hdlr.as_mut().reregister(&mut self.registry_intf)?;
-        self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
+        // self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
+        let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
+        hdlr_vec.clear();
+        hdlr_vec.push((self.registry_intf.2, hdlr));
         Ok(())
     }
 

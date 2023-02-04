@@ -2,7 +2,7 @@ use std::{io, fs};
 use std::net::IpAddr;
 use crate::common::HostName;
 
-fn get_cert_file_name_by_hostname(host_name: &HostName) -> io::Result<(String, String)> {
+fn get_cert_file_name_by_hostname(host_name: Option<HostName>) -> io::Result<(String, String)> {
     let global_config = crate::global::get_global_config();
     let openssl_path = global_config.core.env_openssl_path.clone();
 
@@ -10,7 +10,7 @@ fn get_cert_file_name_by_hostname(host_name: &HostName) -> io::Result<(String, S
     let mut alt_names_ip: Option<String> = None;
 
     let (crt_file_name, csr_file_name, cfg_file_name) = match host_name {
-        HostName::IpAddress(IpAddr::V4(v)) => {
+        Some(HostName::IpAddress(IpAddr::V4(v))) => {
             alt_names_ip = Some(format!("{}", v));
             let n = format!("{}", v).replace(".", "_");
             let crt_file_name = format!("tls.ipv4_{}.crt.crt", n);
@@ -18,7 +18,7 @@ fn get_cert_file_name_by_hostname(host_name: &HostName) -> io::Result<(String, S
             let cfg_file_name = format!("tls.ipv4_{}.cfg.pem", n);
             (crt_file_name, csr_file_name, cfg_file_name)
         }
-        HostName::IpAddress(IpAddr::V6(v)) => {
+        Some(HostName::IpAddress(IpAddr::V6(v))) => {
             alt_names_ip = Some(format!("{}", v));
             let n = format!("{}", v).replace(":", "_");
             let crt_file_name = format!("tls.ipv6_{}.crt.crt", n);
@@ -26,12 +26,18 @@ fn get_cert_file_name_by_hostname(host_name: &HostName) -> io::Result<(String, S
             let cfg_file_name = format!("tls.ipv6_{}.cfg.pem", n);
             (crt_file_name, csr_file_name, cfg_file_name)
         }
-        HostName::DomainName(v) => {
-            alt_names_dns = Some(String::from(v));
+        Some(HostName::DomainName(v)) => {
+            alt_names_dns = Some(String::from(v.as_str()));
             let n = format!("{}", v).replace(".", "_");
             let crt_file_name = format!("tls.dns_{}.crt.crt", n);
             let csr_file_name = format!("tls.dns_{}.csr.pem", n);
             let cfg_file_name = format!("tls.dns_{}.cfg.pem", n);
+            (crt_file_name, csr_file_name, cfg_file_name)
+        }
+        None => {
+            let crt_file_name = format!("tls.none.crt.crt");
+            let csr_file_name = format!("tls.none.csr.pem");
+            let cfg_file_name = format!("tls.none.cfg.pem");
             (crt_file_name, csr_file_name, cfg_file_name)
         }
     };
@@ -50,6 +56,7 @@ fn get_cert_file_name_by_hostname(host_name: &HostName) -> io::Result<(String, S
         // generate request conf file
         let cfg_tmpl = fs::read_to_string(cfg_tmpl_name)?;
         let cfg_cont = cfg_tmpl
+            .replace("{{ALT_NAMES_BOTH_EN}}", if alt_names_ip.is_some() || alt_names_dns.is_some() {""} else {"#"})
             .replace("{{ALT_NAMES_DNS_EN}}", if alt_names_dns.is_some() {""} else {"#"} )
             .replace("{{ALT_NAMES_DNS_VAL}}", &alt_names_dns.unwrap_or("0".to_string()))
             .replace("{{ALT_NAMES_IP_EN}}", if alt_names_ip.is_some() {""} else {"#"} )
@@ -84,7 +91,8 @@ fn get_cert_file_name_by_hostname(host_name: &HostName) -> io::Result<(String, S
     Ok((crt_file_name, key_file_name))
 }
 
-pub fn get_cert_data_by_hostname(host_name: &HostName) -> io::Result<(Vec<rustls::Certificate>, rustls::PrivateKey)> {
+pub fn get_cert_data_by_hostname(host_name: Option<HostName>)
+    -> io::Result<(Vec<rustls::Certificate>, rustls::PrivateKey)> {
     let (cert_file_name, pkey_file_name) = get_cert_file_name_by_hostname(host_name)?;
     let cert_data = crate::common::load_tls_certificate(&cert_file_name)?;
     let pkey_data = crate::common::load_tls_private_key(&pkey_file_name)?;

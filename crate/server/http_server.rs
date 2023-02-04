@@ -10,6 +10,7 @@ use std::net::{SocketAddr, IpAddr, Shutdown};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{create_transformer, Transformer, TransformerPortState, TransformerResult};
 use crate::transformer::httpforward::{HttpForwardTransformer};
+use super::ProxyServer;
 use crate::proxy_client::{get_proxy_client, ProxyClientReadyCall};
 use crate::dnsresolver::{DnsResolveCallback};
 use crate::http_header_parser::parse_http_header;
@@ -35,8 +36,10 @@ impl HttpProxyServer {
             token: Token(0),
         })
     }
+}
 
-    pub fn initial_register(mut self, event_loop: &mut EventLoop) -> io::Result<()> {
+impl ProxyServer for HttpProxyServer {
+    fn launch(mut self, event_loop: &mut EventLoop) -> io::Result<()> {
         self.token = event_loop.token.get();
         event_loop.register(Box::new(self))
     }
@@ -159,7 +162,7 @@ impl EventHandler for ClientRequestHandler {
     }
 }
 
-fn parse_http_proxy_message(msg_buf: &[u8]) -> Result<(usize, HostAddr, bool), String> {
+pub fn parse_http_proxy_message(msg_buf: &[u8]) -> Result<(usize, HostAddr, bool), String> {
     // Parse http message to pick useful information
     let r = parse_http_header(msg_buf);
     if r.is_none() {
@@ -174,7 +177,7 @@ fn parse_http_proxy_message(msg_buf: &[u8]) -> Result<(usize, HostAddr, bool), S
         let scheme_prefix = "http://";
         let pos_l = path_str.find(scheme_prefix);
         if pos_l.is_none() {
-            return Err(format!("Invalid request path, only http supported: {}", path_str));
+            return Err(format!("Invalid request path, only http supported: {:?}", path_str));
         }
         let pos_l = pos_l.unwrap() + scheme_prefix.len();
         let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
@@ -193,7 +196,7 @@ fn parse_http_proxy_message(msg_buf: &[u8]) -> Result<(usize, HostAddr, bool), S
 
 
 
-struct ProxyQueryDoneCallback {
+pub struct ProxyQueryDoneCallback {
     tunnel: ShakingHalfTunnel,
     remote_host: HostAddr,
 }
@@ -212,7 +215,7 @@ impl DnsResolveCallback for ProxyQueryDoneCallback {
             remote_hostname, remote_ipaddr);
 
         let transformer_box = if self.tunnel.tunnel_meta.http_tunnel_mode {
-            create_transformer(&self.remote_host).unwrap()
+            create_transformer(&self.remote_host, true).unwrap()
         } else {
             Box::new(HttpForwardTransformer::new(self.remote_host.clone()))
         };
@@ -253,7 +256,12 @@ struct ClientConnectCallback {
 }
 
 impl ProxyClientReadyCall for ClientConnectCallback {
-    fn proxy_client_ready(self: Box<Self>, event_loop: &mut EventLoop, peer_source: TcpStream) -> io::Result<()> {
+    fn proxy_client_ready(
+        self: Box<Self>,
+        event_loop: &mut EventLoop,
+        peer_source: TcpStream,
+        _peer_token: Token,
+    ) -> io::Result<()> {
         let next_tunnel = EstablishedTunnel::new(
             self.tunnel.token, self.tunnel.conn,
             event_loop.token.get(), peer_source,

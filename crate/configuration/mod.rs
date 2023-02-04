@@ -240,16 +240,27 @@ pub enum DnsServerProtocol {
 }
 
 #[derive(Debug)]
-pub enum OutboundServerProtocol {
+pub enum OutboundClientProtocol {
     Http,
 }
 
 #[derive(Debug)]
-pub struct OutboundServer {
-    pub protocol: OutboundServerProtocol,
+pub struct OutboundClient {
+    pub protocol: OutboundClientProtocol,
     pub addr: SocketAddr,
     pub dns_resolve: bool,
-    // auth: None,
+}
+
+#[derive(Debug)]
+pub enum InboundServerProtocol {
+    Http,
+    HttpOverTls,
+}
+
+#[derive(Debug)]
+pub struct InboundServer {
+    pub protocol: InboundServerProtocol,
+    pub addr: SocketAddr,
 }
 
 #[derive(Debug)]
@@ -261,7 +272,8 @@ pub struct CoreConfig {
     pub dns_cache_expiration: u32,
     pub dns_load_local_host_file: bool,
     pub dns_server: HashMap<String, (DnsServerProtocol, SocketAddr)>,
-    pub outbound_server: HashMap<String, OutboundServer>,
+    pub outbound_client: HashMap<String, OutboundClient>,
+    pub inbound_server: HashMap<String, InboundServer>,
 }
 
 fn parse_core_config(cfg_str: &str) -> CoreConfig {
@@ -273,7 +285,8 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
         dns_cache_expiration: 7200,
         dns_load_local_host_file: true,
         dns_server: HashMap::new(),
-        outbound_server: HashMap::new(),
+        outbound_client: HashMap::new(),
+        inbound_server: HashMap::new(),
     };
 
     use toml::Value;
@@ -292,14 +305,22 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
         cfg.env_openssl_path = String::from("openssl");
     }
 
-    if let Some(t) = toml_root.get("inbound-http") {
-        let t = t.as_table().expect("inbound-http should be a table");
-        cfg.inbound_http_enable =
-            t.get("enable").map(|x| x.as_bool()).flatten().unwrap_or(true);
-        cfg.inbound_http_listen =
-            t.get("listen").map(|x| x.as_str()).flatten().unwrap_or("0.0.0.0:7890").to_string();
-    } else {
-        cfg.inbound_http_enable = false;
+    if let Some(t) = toml_root.get("inbound") {
+        let t = t.as_table().unwrap();
+        for (n, u) in t.iter() {
+            let u = u.as_table().unwrap();
+            let u_enable = u.get("enable").map_or(true, |x| x.as_bool().unwrap());
+            if !u_enable { continue; }
+            let u_listen = u.get("listen").unwrap().as_str().unwrap();
+            let (u_prot, u_addr) = u_listen.split_once("://").unwrap();
+            let prot = match u_prot {
+                "http" => InboundServerProtocol::Http,
+                "https" => InboundServerProtocol::HttpOverTls,
+                _ => continue,
+            };
+            let addr = SocketAddr::from_str(u_addr).unwrap();
+            cfg.inbound_server.insert(n.to_string(), InboundServer { protocol: prot, addr });
+        }
     }
 
     if let Some(t) = toml_root.get("outbound") {
@@ -321,7 +342,7 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
 
             if let Some((u_prot, u_addr)) = u_origin.split_once("://") {
                 let prot = match u_prot {
-                    "http" => OutboundServerProtocol::Http,
+                    "http" => OutboundClientProtocol::Http,
                     _ => {
                         wd_log::log_warn_ln!("Invalid protocol {}", u_prot);
                         continue;
@@ -332,7 +353,7 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
                     wd_log::log_warn_ln!("Invalid origin {}", u_origin);
                     continue;
                 }
-                cfg.outbound_server.insert(n.to_string(), OutboundServer {
+                cfg.outbound_client.insert(n.to_string(), OutboundClient {
                     protocol: prot,
                     addr: addr.unwrap(),
                     dns_resolve: u_dns_resolve,

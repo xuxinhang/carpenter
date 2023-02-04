@@ -1,1 +1,1 @@
-*:0 +server fanq
+*:0 +direct

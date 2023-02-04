@@ -116,7 +116,7 @@ impl EventHandler for ClientShakingHandler {
             let mut buf = vec![0u8; 32*1024];
             let _read_size = conn.read(&mut buf);
             if buf.starts_with("HTTP/1.1 200".as_bytes()) {
-                if let Err(e) = self.readycall.proxy_client_ready(event_loop, conn) {
+                if let Err(e) = self.readycall.proxy_client_ready(event_loop, conn, self.token) {
                     wd_log::log_warn_ln!("ClientShakingHandler # ready error {:?}", e);
                 }
             } else {
