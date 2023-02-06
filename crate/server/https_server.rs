@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, Shutdown};
+use std::str::FromStr;
 use mio::{Interest, Token};
 use mio::event::{Event};
 use mio::net::{TcpListener, TcpStream};
@@ -11,7 +12,6 @@ use crate::transformer::{certstorage::get_cert_data_by_hostname};
 use crate::transformer::{create_transformer_unit, TransformerUnit, TransformerUnitError, TransformerUnitResult};
 use super::ProxyServer;
 use super::prepare::prepare_proxy_client_to_remote_host;
-use super::http_server::parse_http_proxy_message;
 use crate::proxy_client::{ProxyClientReadyCall};
 use crate::common::HostAddr;
 
@@ -71,15 +71,46 @@ impl EventHandler for ProxyServerHttpOverTls {
 }
 
 
+pub fn parse_http_proxy_message(msg_buf: &[u8]) -> Result<(usize, HostAddr, bool), String> {
+    use crate::utils::http_message::parse_http_header;
+    let r = parse_http_header(msg_buf);
+    if r.is_none() {
+        return Err("Invalid http message".to_string());
+    }
+    let (msg_header_length, msg_header_map) = r.unwrap();
+    let use_http_tunnel_mode = msg_header_map[":method"].as_str() == "CONNECT";
+    let host_str: &str = if use_http_tunnel_mode {
+        &msg_header_map[":path"]
+    } else {
+        let path_str = &msg_header_map[":path"];
+        let scheme_prefix = "http://";
+        let pos_l = path_str.find(scheme_prefix);
+        if pos_l.is_none() {
+            return Err(format!("Invalid request path, only http supported: {:?}", path_str));
+        }
+        let pos_l = pos_l.unwrap() + scheme_prefix.len();
+        let pos_r = &path_str[pos_l..].find("/").unwrap_or(path_str.len() - pos_l) + pos_l;
+        &path_str[pos_l..pos_r]
+    };
+
+    // Get hostname from the string
+    let r = HostAddr::from_str(host_str);
+    if r.is_err() {
+        return Err(format!("Invalid host {}", host_str));
+    }
+    let remote_host = r.unwrap();
+
+    Ok((msg_header_length, remote_host, use_http_tunnel_mode))
+}
+
+
 struct ShakingConnection {
     conn: TcpStream,
     conn_token: Token,
-    tls: rustls::ServerConnection,
-    // for temporary use only
-    received_text: Vec<u8>,
-    // transmitting_text: Vec<u8>,
     conn_rsta: ConnStatus,
     conn_wsta: ConnStatus,
+    tls: rustls::ServerConnection,
+    received_text: Vec<u8>,
 }
 
 impl ShakingConnection {
@@ -121,21 +152,16 @@ impl EventHandler for ShakingConnection {
         } else {
             Interest::READABLE
         };
-        println!("MY local token {:?}", self.conn_token);
         registry.reregister(&mut self.conn, self.conn_token, interest)
     }
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
-        let conn = &mut self.conn;
-        let tls = &mut self.tls;
         let shutdown_conn = |c: &mut TcpStream| {
             let x = c.shutdown(Shutdown::Both);
             if let Err(e) = x {
                 wd_log::log_warn_ln!("Fail to shutdown local conn {}", e);
             }
         };
-
-        println!("handle {:?}", event);
 
         if event.is_readable() {
             self.conn_rsta = ConnStatus::Available;
@@ -144,22 +170,14 @@ impl EventHandler for ShakingConnection {
             self.conn_wsta = ConnStatus::Available;
         }
 
+        let conn = &mut self.conn;
+        let tls = &mut self.tls;
+
         loop {
-            println!("shake loop {:?} {:?} {:?} {:?}", self.conn_rsta, tls.wants_read(), self.conn_wsta, tls.wants_write());
             let mut transfer_size = 0;
 
             while tls.wants_read() && self.conn_rsta == ConnStatus::Available {
-                // println!("loop 1");
-                let x = tls.read_tls(conn);
-                match x {
-                    Ok(0) => {
-                        wd_log::log_warn_ln!("ShakingConnection # connection closed");
-                        shutdown_conn(conn);
-                        return;
-                    }
-                    Ok(s) => {
-                        transfer_size += s;
-                    }
+                match tls.read_tls(conn) {
                     Err(ref e) if would_block(e) => {
                         self.conn_rsta = ConnStatus::Block;
                         break;
@@ -168,6 +186,14 @@ impl EventHandler for ShakingConnection {
                         wd_log::log_error_ln!("ShakingConnection # Io Error {:?}", e);
                         shutdown_conn(conn);
                         return;
+                    }
+                    Ok(0) => {
+                        wd_log::log_warn_ln!("ShakingConnection # connection closed");
+                        shutdown_conn(conn);
+                        return;
+                    }
+                    Ok(s) => {
+                        transfer_size += s;
                     }
                 }
                 if let Err(e) = tls.process_new_packets() {
@@ -178,65 +204,29 @@ impl EventHandler for ShakingConnection {
             }
 
             loop {
-                // println!("loop 3");
-                println!("{}", std::str::from_utf8(self.received_text.as_slice()).unwrap());
-                // accroding to rustls document there is only one message chunk
-                // at the same time
                 let mut buf: [u8; 32*1024] = [0; 32*1024];
-                let x = tls.reader().read(&mut buf);
-                if let Err(ref e) = x {
-                    if would_block(e) {
+                match tls.reader().read(&mut buf) {
+                    Err(ref e) if would_block(e) => {
                         break;
-                    } else {
-                        wd_log::log_error_ln!("ShakingConnection # reader {:?}", e);
-                        return;
                     }
-                }
-                let read_size = x.unwrap();
-                if read_size == 0 {
-                    // tls connection closed
-                    wd_log::log_warn_ln!("ShakingConnection # tls closed");
-                    shutdown_conn(conn);
-                    return;
-                }
-                self.received_text.write(&buf[..read_size]).unwrap();
-                transfer_size += read_size;
-                // try to prase http message
-                // println!("{:?}", std::str::from_utf8(&buf[..read_size]).unwrap());
-                let x = parse_http_proxy_message(self.received_text.as_slice());
-                if let Err(e) = x {
-                    if read_size == buf.len() { // TODO
-                        return;
-                        continue; // maybe further data
-                    } else {
-                        wd_log::log_warn_ln!("ShakingConnection # {:?}", e);
+                    Err(ref e) => {
+                        wd_log::log_error_ln!("ShakingConnection # reader {:?}", e);
                         shutdown_conn(conn);
                         return;
                     }
+                    Ok(0) => {
+                        wd_log::log_warn_ln!("ShakingConnection # tls closed");
+                        shutdown_conn(conn);
+                        return;
+                    }
+                    Ok(s) => {
+                        self.received_text.write(&buf[..s]).unwrap();
+                        transfer_size += s;
+                    }
                 }
-                let (_msg_header_length, host, use_http_tunnel_mode) = x.unwrap();
-                println!("shaked {:?} {:?}", host, use_http_tunnel_mode);
-                let tunnel_meta = TunnelMeta {
-                    _remote_host: host.clone(),
-                    http_tunnel_mode: use_http_tunnel_mode,
-                };
-
-                let transformer = create_transformer_unit(&host, use_http_tunnel_mode).unwrap();
-                let proxy_client_callback = ProxyServerResponseHandler {
-                    conn: self.conn,
-                    conn_token: self.conn_token,
-                    tls: self.tls,
-                    transformer,
-                    meta: tunnel_meta,
-                    peer_conn: None,
-                    peer_token: None,
-                };
-                prepare_proxy_client_to_remote_host(host.clone(), event_loop, Box::new(proxy_client_callback));
-                return;
             }
 
             while tls.wants_write() && self.conn_wsta == ConnStatus::Available {
-                // println!("loop 2");
                 match tls.write_tls(conn) {
                     Err(ref e) if would_block(e) => {
                         self.conn_wsta = ConnStatus::Block;
@@ -253,24 +243,42 @@ impl EventHandler for ShakingConnection {
                 }
             }
 
+            // write no plain text to tls layer
+
             if transfer_size == 0 { break; }
         }
 
-        // don't consider write plaintext to tls layer
+        loop {
+            let x = parse_http_proxy_message(self.received_text.as_slice());
+            if let Err(_e) = x {
+                break;
+            }
+            let (_msg_header_length, host, use_http_tunnel_mode) = x.unwrap();
+            // println!("shaked {:?} {:?}", host, use_http_tunnel_mode);
 
-        // assert!(self.conn_rsta == ConnStatus::Block || self.conn_wsta == ConnStatus::Block);
+            let tunnel_meta = TunnelMeta {
+                _remote_host: host.clone(),
+                http_tunnel_mode: use_http_tunnel_mode,
+            };
+            let transformer = create_transformer_unit(&host, use_http_tunnel_mode).unwrap();
+            let proxy_client_callback = ProxyServerResponseHandler {
+                conn: self.conn,
+                conn_token: self.conn_token,
+                tls: self.tls,
+                transformer,
+                meta: tunnel_meta,
+                peer_conn: None,
+                peer_token: None,
+            };
+            prepare_proxy_client_to_remote_host(host.clone(), event_loop, Box::new(proxy_client_callback));
+            return;
+        }
+
+        assert!(self.conn_rsta == ConnStatus::Block || self.conn_wsta == ConnStatus::Block);
         event_loop.reregister(self).unwrap();
     }
 }
 
-
-// struct ProxyClientConnectCallback {
-//     conn: TcpStream,
-//     conn_token: Token,
-//     tls: ServerConnection,
-//     transformer: Box<dyn Transformer>,
-//     meta: TunnelMeta,
-// }
 
 struct ProxyServerResponseHandler {
     conn: TcpStream,
@@ -318,15 +326,6 @@ impl EventHandler for ProxyServerResponseHandler {
                 }
             }
 
-            // let handler = Box::new(LocalConnProbe {
-            //     conn: self.conn,
-            //     conn_token: self.conn_token,
-            //     conn_rsta: ConnStatus::Block,
-            //     conn_wsta: ConnStatus::Block,
-            //     tls: self.tls,
-            // });
-            // event_loop.reregister(handler).unwrap();
-
             let mut tunnel_transformers = Vec::new();
             tunnel_transformers.push(self.transformer);
             tunnel_transformers.insert(0, Box::new(ServerFerryTransformer {
@@ -348,145 +347,6 @@ impl EventHandler for ProxyServerResponseHandler {
     }
 }
 
-struct LocalConnProbe {
-    conn: TcpStream,
-    conn_token: Token,
-    conn_rsta: ConnStatus,
-    conn_wsta: ConnStatus,
-    tls: ServerConnection,
-}
-
-impl EventHandler for LocalConnProbe {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        registry.register(&mut self.conn, self.conn_token, Interest::READABLE)
-    }
-
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        let interest = if self.conn_rsta == ConnStatus::Block && self.conn_wsta == ConnStatus::Block {
-            Interest::READABLE | Interest::WRITABLE
-        } else if self.conn_wsta == ConnStatus::Block {
-            Interest::WRITABLE
-        } else if self.conn_rsta == ConnStatus::Block {
-            Interest::READABLE
-        } else {
-            Interest::READABLE
-        };
-        registry.reregister(&mut self.conn, self.conn_token, interest)
-    }
-
-    fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
-        /**/
-        if event.is_readable() {
-            let mut buf = Vec::with_capacity(32*1024);
-            buf.resize(buf.capacity(), 0);
-            loop {
-                let x = self.conn.read(buf.as_mut());
-                if let Err(ref e) = x {
-                    println!("C {:?}", e);
-                    if would_block(e) {
-                        break;
-                    } else {
-                        return;
-                    }
-                }
-                let s = x.unwrap();
-                if s == 0 {
-                    return;
-                }
-                println!("{} ] {:?}", s, &buf[..s]);
-            }
-        }
-        event_loop.reregister(self).unwrap();
-
-        return; // */
-
-        // let message = "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes();
-        // self.tls.writer().write(&message).unwrap();
-
-        let conn = &mut self.conn;
-        let tls = &mut self.tls;
-        let shutdown_conn = |c: &mut TcpStream| {
-            let x = c.shutdown(Shutdown::Both);
-            if let Err(e) = x {
-                wd_log::log_warn_ln!("Fail to shutdown local conn {}", e);
-            }
-        };
-
-        if event.is_readable() {
-            self.conn_rsta = ConnStatus::Available;
-        }
-        if event.is_writable() {
-            self.conn_wsta = ConnStatus::Available;
-        }
-
-        println!("start");
-
-        loop {
-            let mut transfer_size = 0;
-
-            while tls.wants_read() && self.conn_rsta == ConnStatus::Available {
-                let x = tls.read_tls(conn);
-                match x {
-                    Err(ref e) if would_block(e) => {
-                        self.conn_rsta = ConnStatus::Block;
-                        break;
-                    }
-                    Err(ref e) => {
-                        wd_log::log_error_ln!("ShakingConnection # {:?}", e);
-                        shutdown_conn(conn);
-                        return;
-                    }
-                    Ok(s) => {
-                        println!("read_tls {}", s);
-                        transfer_size += s;
-                    }
-                }
-                if let Err(e) = tls.process_new_packets() {
-                    wd_log::log_error_ln!("ShakingConnection # {:?}", e);
-                    shutdown_conn(conn);
-                    return;
-                }
-            }
-
-            while tls.wants_write() && self.conn_wsta == ConnStatus::Available {
-                match tls.write_tls(conn) {
-                    Err(ref e) if would_block(e) => {
-                        self.conn_wsta = ConnStatus::Block;
-                        break;
-                    }
-                    Err(ref e) => {
-                        wd_log::log_error_ln!("ShakingConnection # {:?}", e);
-                        shutdown_conn(conn);
-                        return;
-                    }
-                    Ok(s) => {
-                        println!("write_tls {}", s);
-                        transfer_size += s;
-                    }
-                }
-            }
-
-            loop {
-                // accroding to rustls document there is only one message chunk
-                // at the same time
-                let mut buf: [u8; 32*1024] = [0; 32*1024];
-                let read_size = tls.reader().read(&mut buf).unwrap_or(0);
-                if read_size == 0 {
-                    break;
-                }
-                // self.received_text.write(&buf[..read_size]).unwrap();
-                transfer_size += read_size;
-                // try to prase http message
-                // println!("Probe Plaintext Read: {:?}", std::str::from_utf8(&buf[..read_size]).unwrap());
-                println!("Probe Plaintext Read: {:?}", &buf[..read_size]);
-            }
-
-            if transfer_size == 0 { break; }
-        }
-
-        event_loop.reregister(self).unwrap();
-    }
-}
 
 #[inline(always)]
 fn would_block(err: &std::io::Error) -> bool {
@@ -577,16 +437,9 @@ impl EstablishedTunnel {
 
         loop {
             let mut transfer_count = 0;
-            // let flag_local_readable_register = 0;
-            // let flag_local_writable_register = 0;
-            // let flag_remote_readable_register = 0;
-            // let flag_remote_writable_register = 0;
-            // let flag_tunnel_crash = 0;
-            // println!("loop level 0");
 
             // fill buffers on transmit path
             for _ in 0..8 {
-                // println!("loop level 0: fill buffers on transmit path");
                 let mut xfer_count = 0;
                 // read from: local_conn
                 {
@@ -594,14 +447,12 @@ impl EstablishedTunnel {
                     let sta = &bf.1;
                     let buf = &mut bf.0;
                     if sta.is_readable() && buf.len() == 0 && self.local_rsta == ConnStatus::Available {
-                        // println!("Loop {} {:?}", y, self.local_rsta);
                         buf.resize(buf.capacity(), 0);
                         match self.local_conn.read(buf.as_mut_slice()) {
                             Ok(0) => {
                                 buf.resize(0, 0);
                                 sta.remove(Interest::READABLE);
                                 self.local_rsta = ConnStatus::Shutdown;
-                                // println!("L R 0");
                             }
                             Ok(s) => {
                                 wd_log::log_debug_ln!("Tunnel # local conn read {}", s);
@@ -612,7 +463,6 @@ impl EstablishedTunnel {
                             Err(ref e) if would_block(e) => {
                                 buf.resize(0, 0);
                                 self.local_rsta = ConnStatus::Block;
-                                // println!("L R Block");
                             }
                             Err(ref e) if connection_error(e) => {
                                 wd_log::log_debug_ln!("Connection Error {:?}", e);
@@ -666,7 +516,6 @@ impl EstablishedTunnel {
 
             // output buffers on transmit path
             for _ in 0..8 {
-                // println!("loop level 0: output buffers on transmit path");
                 let mut xfer_count = 0;
                 // write into: transformer units
                 for (bf, tf) in zip(
@@ -735,7 +584,6 @@ impl EstablishedTunnel {
 
             // fill buffers on receive path
             for _ in 0..8 {
-                // println!("loop level 0: fill buffers on receive path");
                 let mut xfer_count = 0;
                 // read from: remote_conn
                 {
@@ -758,7 +606,6 @@ impl EstablishedTunnel {
                             Err(ref e) if would_block(e) => {
                                 buf.resize(0, 0);
                                 self.remote_rsta = ConnStatus::Block;
-                                // println!("Remote Conn Read Block");
                             }
                             Err(ref e) if connection_error(e) => {
                                 wd_log::log_debug_ln!("Connection Error {:?}", e);
@@ -811,7 +658,6 @@ impl EstablishedTunnel {
 
             // output buffers on receive path
             for _ in 0..8 {
-                // println!("loop level 0: output buffers on receive path");
                 let mut xfer_count = 0;
                 // write into: transformer units
                 for (bf, tf) in zip(
@@ -856,7 +702,6 @@ impl EstablishedTunnel {
                             }
                             Err(ref e) if would_block(e) => {
                                 self.local_wsta = ConnStatus::Block;
-                                // println!("L W");
                             }
                             Err(ref e) if connection_error(e) => {
                                 wd_log::log_debug_ln!("Tunnel # Connection Error {:?}", e);
@@ -879,10 +724,7 @@ impl EstablishedTunnel {
                 if xfer_count == 0 { break; }
             }
 
-            if transfer_count == 0 {
-                // println!("transfer_count = {}", transfer_count);
-                break;
-            }
+            if transfer_count == 0 { break; }
         }
     }
 
@@ -892,13 +734,8 @@ impl EstablishedTunnel {
         local_conn_event: Option<&Event>,
         remote_conn_event: Option<&Event>,
     ) {
-        // println!("Event {:?} {:?}", local_conn_event, remote_conn_event);
         let mut tunnel_borrow = tunnel_cell.borrow_mut();
         let tunnel = &mut * tunnel_borrow;
-
-        unsafe {
-            // println!("test_count = {}", test_count);
-        }
 
         let set_status_by_event = |e: &Event, wsta: &mut ConnStatus, rsta: &mut ConnStatus| {
             if e.is_readable() { *rsta = ConnStatus::Available; }
@@ -906,12 +743,10 @@ impl EstablishedTunnel {
         };
 
         if let Some(e) = local_conn_event {
-            if e.is_readable() { tunnel.local_rsta = ConnStatus::Available; }
-            if e.is_writable() { tunnel.local_wsta = ConnStatus::Available; }
+            set_status_by_event(e, &mut tunnel.local_wsta, &mut tunnel.local_rsta);
         }
         if let Some(e) = remote_conn_event {
-            if e.is_readable() { tunnel.remote_rsta = ConnStatus::Available; }
-            if e.is_writable() { tunnel.remote_wsta = ConnStatus::Available; }
+            set_status_by_event(e, &mut tunnel.remote_wsta, &mut tunnel.remote_rsta);
         }
 
         tunnel.do_transfer();
@@ -1028,8 +863,6 @@ impl TransformerUnit for ServerFerryTransformer {
 }
 
 
-static mut test_count: usize = 0;
-
 struct EstablishedTunnelLocalConnHandler {
     tunnel: Rc<RefCell<EstablishedTunnel>>,
     interest: Interest,
@@ -1042,14 +875,11 @@ impl EventHandler for EstablishedTunnelLocalConnHandler {
     }
 
     fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        unsafe { test_count += 1; }
         let tunnel = &mut * self.tunnel.borrow_mut();
-        // println!("local token {:?}", tunnel.local_token);
         registry.reregister(&mut tunnel.local_conn, tunnel.local_token, self.interest)
     }
 
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
-        unsafe { test_count -= 1; }
         if event.is_writable() && self.interest.is_writable()
             || event.is_readable() && self.interest.is_readable() {
             EstablishedTunnel::process_conn_event(self.tunnel, event_loop, Some(event), None);
@@ -1071,7 +901,6 @@ impl EventHandler for EstablishedTunnelRemoteConnHandler {
 
     fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let tunnel = &mut * self.tunnel.borrow_mut();
-        // println!("remote token {:?}", tunnel.remote_token);
         registry.reregister(&mut tunnel.remote_conn, tunnel.remote_token, self.interest)
     }
 
@@ -1082,103 +911,3 @@ impl EventHandler for EstablishedTunnelRemoteConnHandler {
         }
     }
 }
-
-
-
-
-
-
-
-/*
-struct TunnelRemoteFerry {
-    token: Token,
-    conn: TcpStream,
-    // rbuf: VecDeque<u8>, wbuf: VecDeque<u8>,
-}
-
-enum FerryError {
-    IoError(std::io::Error),
-    RustlsError(rustls::Error),
-}
-
-trait Ferry {
-    fn conn(&self) -> &TcpStream;
-    fn conn_mut(&mut self) -> &mut TcpStream;
-    fn token(&self) -> Token;
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, FerryError>;
-    fn write(&mut self, buf: &[u8]) -> Result<usize, FerryError>;
-    fn shutdown(&mut self, interest: std::net::Interest) -> Result<usize, FerryError>;
-}
-
-impl Ferry for TunnelRemoteFerry {
-    fn conn(&self) -> &TcpStream {
-        &self.conn
-    }
-    fn conn_mut(&mut self) -> &mut TcpStream {
-        &mut self.conn
-    }
-    fn token(&self) -> Token {
-        self.token.clone()
-    }
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, FerryError> {
-        self.conn.read(buf).map_err(|e| FerryError::IoError(e))
-    }
-    fn write(&mut self, buf: &[u8]) -> Result<usize, FerryError> {
-        self.conn.write(buf).map_err(|e| FerryError::IoError(e))
-    }
-}
-
-
-struct TunnelLocalFerry {
-    token: Token,
-    conn: TcpStream,
-    tls: ServerConnection,
-}
-
-impl Ferry for TunnelLocalFerry {
-    fn conn(&self) -> &TcpStream {
-        &self.conn
-    }
-    fn conn_mut(&mut self) -> &mut TcpStream {
-        &mut self.conn
-    }
-    fn token(&self) -> Token {
-        self.token.clone()
-    }
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, FerryError> {
-        let s = self.tls.reader().read(buf).map_err(|e| FerryError::IoError(e))?;
-        if s != 0 {
-            return Ok(s);
-        }
-
-        if self.tls.wants_read() == false {
-            return Ok(0);
-        }
-
-        let s = self.tls.read_tls(&mut self.conn).map_err(|e| FerryError::IoError(e))?;
-        if s == 0 {
-            return Ok(0);
-        }
-        let _ = self.tls.process_new_packets().map_err(|e| FerryError::RustlsError(e);
-        let s = self.tls.reader().read(buf).map_err(|e| FerryError::IoError(e))?;
-        return Ok(s);
-    }
-    fn write(&mut self, buf: &[u8]) -> Result<usize, FerryError> {
-        if self.tls.wants_write() == false {
-            let s = self.tls.writer().write(buf).map_err(|e| FerryError::IoError(e)?;
-            if s == 0 {
-                return Ok(0);
-            }
-        }
-        if self.tls.wants_write() == false {
-            return Ok(0);
-        }
-        let s = self.tls.write_tls(&mut self.conn).map_err(|e| FerryError::IoError(e))?;
-        return Ok(s);
-    }
-}
-*/
-
-
-
-

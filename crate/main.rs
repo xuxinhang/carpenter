@@ -9,6 +9,7 @@ pub mod common;
 pub mod uri_match;
 pub mod dnsresolver;
 pub mod global;
+pub mod utils;
 
 
 use std::rc::Rc;

@@ -15,7 +15,6 @@ pub fn prepare_proxy_client_to_remote_host(
     let (client, is_dns_resolve_required) = get_proxy_client(&host).unwrap();
 
     if is_dns_resolve_required {
-        println!("A _");
         let query_callback = Box::new(RemoteHostQueryDoneCallback {
             remote_host: host.clone(),
             proxy_client: client,
