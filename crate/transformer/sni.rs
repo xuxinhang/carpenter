@@ -4,15 +4,32 @@ use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
 use super::streambuffer::StreamBuffer;
 use super::certstorage::get_cert_data_by_hostname;
 use super::{TransformerResult, TransformerPortState, Transformer};
+use super::{TransformerUnit, TransformerUnitResult, TransformerUnitError};
 use crate::common::HostName;
 
 const SINGLE_BRUST_SIZE_LIMIT: usize = 512 * 1024; // = 512 KB
+
+
+fn convert_hostname_to_rustls_server_name(h: HostName) -> rustls::client::ServerName {
+    use rustls::client::ServerName;
+    match h {
+        HostName::IpAddress(v) => ServerName::IpAddress(v),
+        HostName::DomainName(v) => ServerName::try_from(v.as_str()).unwrap(),
+    }
+}
+
 
 pub struct SniRewriterTransformer {
     local_tls: ServerConnection,
     remote_tls: ClientConnection,
     transmit_text: StreamBuffer,
     receive_text: StreamBuffer,
+    transmit_buf: Vec<u8>,
+    receive_buf: Vec<u8>,
+    local_closed: bool,
+    local_closing: bool,
+    remote_closed: bool,
+    remote_closing: bool,
 }
 
 impl SniRewriterTransformer {
@@ -64,6 +81,12 @@ impl SniRewriterTransformer {
             remote_tls,
             transmit_text: StreamBuffer::new(),
             receive_text: StreamBuffer::new(),
+            transmit_buf: Vec::new(),
+            receive_buf: Vec::new(),
+            local_closed: false,
+            local_closing: false,
+            remote_closed: false,
+            remote_closing: false,
         })
     }
 }
@@ -230,12 +253,128 @@ impl Transformer for SniRewriterTransformer {
 }
 
 
+impl TransformerUnit for SniRewriterTransformer {
+    fn transmit_write(&mut self, mut buf: &[u8]) -> TransformerUnitResult {
+        if self.local_closed == true {
+            return Err(TransformerUnitError::ClosedError());
+        }
 
-fn convert_hostname_to_rustls_server_name(h: HostName) -> rustls::client::ServerName {
-    use rustls::client::ServerName;
-    match h {
-        HostName::IpAddress(v) => ServerName::IpAddress(v),
-        HostName::DomainName(v) => ServerName::try_from(v.as_str()).unwrap(),
+        if !self.local_tls.wants_read() {
+            return Ok(0);
+        }
+        let s = self.local_tls.read_tls(&mut buf)
+            .map_err(|e| TransformerUnitError::IoError(e))?;
+        if s == 0 {
+            return Ok(0);
+        }
+
+        let state = self.local_tls.process_new_packets()
+            .map_err(|e| TransformerUnitError::TlsError(e))?;
+        let plaintext_size = state.plaintext_bytes_to_read();
+        let peer_closed = state.peer_has_closed();
+        if peer_closed {
+            self.local_closed = true;
+        }
+
+        // read out plain texts, write them into its pair tls or the buffer.
+        let mut text_buffer = Vec::new();
+        text_buffer.resize(plaintext_size, 0);
+        let text_read_size = self.local_tls.reader().read(&mut text_buffer).unwrap();
+        assert_eq!(text_read_size, plaintext_size);
+        self.transmit_buf.write(&text_buffer).map_err(|e| TransformerUnitError::IoError(e))?;
+        return Ok(s);
+    }
+
+    fn transmit_read(&mut self, mut buf: &mut [u8]) -> TransformerUnitResult {
+        if self.remote_closing && self.remote_tls.wants_write() && self.remote_tls.wants_read() {
+            self.remote_closed = true;
+        }
+        if self.remote_closed {
+            return Err(TransformerUnitError::ClosedError());
+        }
+
+        if self.transmit_buf.is_empty() && self.local_closed {
+            self.remote_tls.send_close_notify();
+        } else {
+            let s = self.remote_tls.writer().write(self.transmit_buf.as_slice()).unwrap();
+            self.transmit_buf.drain(0..s);
+            if self.transmit_buf.is_empty() && self.local_closed {
+                self.remote_tls.send_close_notify();
+                self.remote_closing = true;
+            }
+        }
+
+        if !self.remote_tls.wants_write() {
+            return Ok(0);
+        }
+        let s = self.remote_tls.write_tls(&mut buf).map_err(|e| TransformerUnitError::IoError(e))?;
+        return Ok(s);
+    }
+
+    fn transmit_end(&mut self) -> TransformerUnitResult {
+        self.local_tls.send_close_notify();
+        self.local_closing = true;
+        return Ok(0);
+    }
+
+    fn receive_write(&mut self, mut buf: &[u8]) -> TransformerUnitResult {
+        if self.remote_closed == true {
+            return Err(TransformerUnitError::ClosedError());
+        }
+
+        if !self.remote_tls.wants_read() {
+            return Ok(0);
+        }
+        let s = self.remote_tls.read_tls(&mut buf) .map_err(|e| TransformerUnitError::IoError(e))?;
+        if s == 0 {
+            return Ok(0);
+        }
+
+        let state = self.remote_tls.process_new_packets().map_err(|e| TransformerUnitError::TlsError(e))?;
+        let plaintext_size = state.plaintext_bytes_to_read();
+        let peer_closed = state.peer_has_closed();
+        if peer_closed {
+            self.remote_closed = true;
+        }
+
+        let mut text_buffer = Vec::new();
+        text_buffer.resize(plaintext_size, 0);
+        let text_read_size = self.remote_tls.reader().read(&mut text_buffer).unwrap();
+        assert_eq!(text_read_size, plaintext_size);
+        self.receive_buf.write(&text_buffer).map_err(|e| TransformerUnitError::IoError(e))?;
+        return Ok(s);
+    }
+
+    fn receive_read(&mut self, mut buf: &mut [u8]) -> TransformerUnitResult {
+        if self.local_closing && self.local_tls.wants_write() && self.local_tls.wants_read() {
+            self.local_closed = true;
+        }
+        if self.local_closed {
+            return Err(TransformerUnitError::ClosedError());
+        }
+
+        if self.receive_buf.is_empty() && self.remote_closed {
+            self.local_tls.send_close_notify();
+        } else {
+            let s = self.local_tls.writer().write(self.receive_buf.as_slice()).unwrap();
+            self.receive_buf.drain(0..s);
+            if self.receive_buf.is_empty() && self.remote_closed {
+                self.local_tls.send_close_notify();
+                self.local_closing = true;
+            }
+        }
+
+        if !self.local_tls.wants_write() {
+            return Ok(0);
+        }
+        let s = self.local_tls.write_tls(&mut buf).map_err(|e| TransformerUnitError::IoError(e))?;
+        return Ok(s);
+    }
+
+    fn receive_end(&mut self) -> TransformerUnitResult {
+        self.remote_tls.send_close_notify();
+        self.remote_closing = true;
+        return Ok(0);
     }
 }
 

@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::io::{Read, Write};
 use std::collections::{VecDeque};
 use super::{Transformer, TransformerPortState, TransformerResult};
+use super::{TransformerUnit, TransformerUnitResult, TransformerUnitError};
 use super::streambuffer::StreamBuffer;
 use crate::common::{HostAddr};
 
@@ -17,6 +18,8 @@ pub struct HttpForwardTransformer {
     body_len_remained: usize,
     process_buffer: VecDeque<u8>,
     expected_host: HostAddr,
+    transmit_closed: bool,
+    receive_closed: bool,
 }
 
 impl HttpForwardTransformer {
@@ -28,6 +31,8 @@ impl HttpForwardTransformer {
             body_len_remained: 0,
             process_buffer: VecDeque::with_capacity(32 * 1024),
             expected_host: host,
+            transmit_closed: false,
+            receive_closed: false,
         }
     }
 
@@ -194,3 +199,71 @@ impl Transformer for HttpForwardTransformer {
     }
 }
 
+
+impl TransformerUnit for HttpForwardTransformer {
+    fn transmit_write(&mut self, buf: &[u8]) -> TransformerUnitResult {
+        if self.transmit_closed {
+            return Err(TransformerUnitError::ClosedError());
+        }
+        self.process_buffer.extend(buf.iter().take(self.transmit_buf.writable_size()));
+        match self.process_message() {
+            TransformerResult::Ok(s) => Ok(s),
+            TransformerResult::IoError(e) => Err(TransformerUnitError::IoError(e)),
+            TransformerResult::ProtocolError(e) => Err(TransformerUnitError::TlsError(e)),
+            TransformerResult::CustomError(a, b) => Err(TransformerUnitError::CustomError(a, b)),
+        }
+    }
+
+    fn transmit_read(&mut self, buf: &mut [u8]) -> TransformerUnitResult {
+        match self.transmit_buf.read(buf) {
+            Ok(0) => {
+                if self.transmit_closed && buf.len() > 0 {
+                    return Err(TransformerUnitError::ClosedError());
+                } else {
+                    return Ok(0);
+                }
+            }
+            Ok(s) => {
+                return Ok(s);
+            }
+            Err(e) => {
+                return Err(TransformerUnitError::IoError(e));
+            }
+        }
+    }
+
+    fn transmit_end(&mut self) -> TransformerUnitResult {
+        self.transmit_closed = true;
+        return Ok(0);
+    }
+
+    fn receive_write(&mut self, buf: &[u8]) -> TransformerUnitResult {
+        if self.receive_closed {
+            return Err(TransformerUnitError::ClosedError());
+        }
+        return Ok(self.receive_buf.write(buf).unwrap());
+    }
+
+    fn receive_read(&mut self, buf: &mut [u8]) -> TransformerUnitResult {
+        match self.receive_buf.read(buf) {
+            Ok(0) => {
+                if self.receive_closed && buf.len() > 0 {
+                    return Err(TransformerUnitError::ClosedError());
+                } else {
+                    return Ok(0);
+                }
+            }
+            Ok(s) => {
+                return Ok(s);
+            }
+            Err(e) => {
+                return Err(TransformerUnitError::IoError(e));
+            }
+        }
+    }
+
+    fn receive_end(&mut self) -> TransformerUnitResult {
+        self.receive_closed = true;
+        return Ok(0);
+    }
+}

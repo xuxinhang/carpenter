@@ -269,6 +269,7 @@ impl EventHandler for ShakingConnection {
                 meta: tunnel_meta,
                 peer_conn: None,
                 peer_token: None,
+                http_message: self.received_text,
             };
             prepare_proxy_client_to_remote_host(host.clone(), event_loop, Box::new(proxy_client_callback));
             return;
@@ -288,6 +289,7 @@ struct ProxyServerResponseHandler {
     meta: TunnelMeta,
     peer_conn: Option<TcpStream>,
     peer_token: Option<Token>,
+    http_message: Vec<u8>,
 }
 
 impl ProxyClientReadyCall for ProxyServerResponseHandler {
@@ -340,6 +342,7 @@ impl EventHandler for ProxyServerResponseHandler {
                 self.conn_token,
                 self.peer_conn.unwrap(),
                 self.peer_token.unwrap(),
+                self.http_message.as_slice(),
             )));
 
             EstablishedTunnel::process_conn_event(tunnel_cell, event_loop, None, None);
@@ -392,6 +395,7 @@ impl EstablishedTunnel {
         local_token: Token,
         remote_conn: TcpStream,
         remote_token: Token,
+        early_http_message: &[u8],
     ) -> Self {
         let tf_number = transformers.len();
         let mut transmit_buffers = Vec::with_capacity(tf_number+1);
@@ -400,6 +404,11 @@ impl EstablishedTunnel {
         for _ in 0..(tf_number+1) {
             transmit_buffers.push((Vec::with_capacity(32 * 1024), default_interest.clone()));
             receive_buffers.push((Vec::with_capacity(32 * 1024), default_interest.clone()));
+        }
+
+        // when using forward mode...
+        if !meta.http_tunnel_mode {
+            transmit_buffers[1].0.write(early_http_message).unwrap();
         }
 
         Self {
@@ -481,23 +490,26 @@ impl EstablishedTunnel {
                 }
                 // read from: transformer units
                 assert_eq!(self.transmit_buffers.iter().count(), tf_number+1);
-                for (bf, tf) in zip(
+                for (i, (bf, tf)) in zip(0.., zip(
                     self.transmit_buffers.iter_mut().skip(1),
                     self.transformers.iter_mut()
-                ) {
+                )) {
                     let sta = &bf.1;
                     let buf = &mut bf.0;
                     if sta.is_readable() && buf.len() == 0 {
                         buf.resize(buf.capacity(), 0);
                         match tf.transmit_read(buf.as_mut_slice()) {
                             Ok(s) => {
+                                wd_log::log_debug_ln!("Transformer #{} transmit_read {}", i, s);
                                 buf.resize(s, 0);
                                 xfer_count += s;
                             }
                             Err(TransformerUnitError::IoError(ref e)) if would_block(e) => {
+                                // wd_log::log_debug_ln!("Transformer #{} transmit_read would_block", i);
                                 buf.resize(0, 0);
                             }
                             Err(TransformerUnitError::ClosedError()) => {
+                                wd_log::log_debug_ln!("Transformer #{} transmit_read close", i);
                                 buf.resize(0, 0);
                                 sta.remove(Interest::READABLE);
                             }
@@ -518,22 +530,25 @@ impl EstablishedTunnel {
             for _ in 0..8 {
                 let mut xfer_count = 0;
                 // write into: transformer units
-                for (bf, tf) in zip(
+                for (i, (bf, tf)) in zip(0.., zip(
                     self.transmit_buffers.iter_mut().take(tf_number),
                     self.transformers.iter_mut()
-                ) {
+                )) {
                     let sta = &bf.1;
                     let buf = &mut bf.0;
                     if sta.is_writable() && buf.len() > 0 {
                         match tf.transmit_write(buf.as_slice()) {
                             Ok(s) => {
+                                wd_log::log_debug_ln!("Transformer #{} transmit_write {}", i, s);
                                 buf.drain(0..s);
                                 xfer_count += s;
                             }
                             Err(TransformerUnitError::IoError(ref e)) if would_block(e) => {
+                                // wd_log::log_debug_ln!("Transformer #{} transmit_write would_block", i);
                                 buf.drain(0..0);
                             }
                             Err(TransformerUnitError::ClosedError()) => {
+                                wd_log::log_debug_ln!("Transformer #{} transmit_write close", i);
                                 sta.remove(Interest::WRITABLE);
                             }
                             Err(ref e) => {
