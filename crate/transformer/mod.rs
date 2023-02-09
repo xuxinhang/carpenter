@@ -1,7 +1,6 @@
 pub mod base;
 pub mod buffer;
 pub mod streambuffer;
-pub mod certstorage;
 pub mod direct;
 pub mod sniomit;
 pub mod directconnect;

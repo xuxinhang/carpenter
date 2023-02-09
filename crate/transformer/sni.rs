@@ -2,7 +2,7 @@ use std::io;
 use std::io::{Read, Write};
 use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
 use super::streambuffer::StreamBuffer;
-use super::certstorage::get_cert_data_by_hostname;
+use crate::certmgr::certstorage::get_cert_data_by_hostname;
 use super::{TransformerResult, TransformerPortState, Transformer};
 use super::{TransformerUnit, TransformerUnitResult, TransformerUnitError};
 use crate::common::HostName;

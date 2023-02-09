@@ -8,7 +8,7 @@ use mio::event::{Event};
 use mio::net::{TcpListener, TcpStream};
 use rustls::{ServerConfig, ServerConnection};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
-use crate::transformer::{certstorage::get_cert_data_by_hostname};
+use crate::certmgr::certstorage::{get_cert_data_by_hostname};
 use crate::transformer::{create_transformer_unit, TransformerUnit, TransformerUnitError, TransformerUnitResult};
 use super::ProxyServer;
 use super::prepare::prepare_proxy_client_to_remote_host;

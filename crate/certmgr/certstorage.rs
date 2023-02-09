@@ -102,7 +102,6 @@ pub fn get_cert_data_by_hostname(host_name: Option<HostName>)
 pub fn get_other_cert_data(crt_file_name: &str) -> io::Result<Vec<rustls::Certificate>> {
     let file_path_prefix = "_certs/issued/";
     let crt_file_name = format!("{}{}", file_path_prefix, crt_file_name);
-    // return crt_file_name;
     let cert_data = crate::common::load_tls_certificate(&crt_file_name)?;
     Ok(cert_data)
 }

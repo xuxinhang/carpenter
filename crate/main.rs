@@ -1,5 +1,4 @@
 pub mod event_loop;
-// pub mod proxy_http;
 pub mod http_header_parser;
 pub mod transformer;
 pub mod server;
@@ -10,6 +9,7 @@ pub mod uri_match;
 pub mod dnsresolver;
 pub mod global;
 pub mod utils;
+pub mod certmgr;
 
 
 use std::rc::Rc;

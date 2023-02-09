@@ -9,7 +9,7 @@ use super::{ProxyClient, ProxyClientReadyCall};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{TransformerUnit, TransformerUnitResult, TransformerUnitError};
 use crate::common::HostAddr;
-use crate::transformer::certstorage::get_other_trust_anchor_data;
+use crate::certmgr::certstorage::get_other_trust_anchor_data;
 
 
 fn check_response(buf: &[u8]) -> bool {
