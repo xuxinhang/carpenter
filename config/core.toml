@@ -13,7 +13,7 @@ listen = "https://0.0.0.0:7899"
 
 [outbound.fanq]
 enable = true
-origin = "http://127.0.0.1:7891"
+origin = "https://127.0.0.1:7898"
 
 
 [log]

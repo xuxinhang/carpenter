@@ -98,3 +98,32 @@ pub fn get_cert_data_by_hostname(host_name: Option<HostName>)
     let pkey_data = crate::common::load_tls_private_key(&pkey_file_name)?;
     Ok((cert_data, pkey_data))
 }
+
+pub fn get_other_cert_data(crt_file_name: &str) -> io::Result<Vec<rustls::Certificate>> {
+    let file_path_prefix = "_certs/issued/";
+    let crt_file_name = format!("{}{}", file_path_prefix, crt_file_name);
+    // return crt_file_name;
+    let cert_data = crate::common::load_tls_certificate(&crt_file_name)?;
+    Ok(cert_data)
+}
+
+pub fn get_other_trust_anchor_data(crt_file_name: &str) -> io::Result<Option<rustls::OwnedTrustAnchor>> {
+    let file_path_prefix = "_certs/";
+    let crt_file_name = format!("{}{}", file_path_prefix, crt_file_name);
+
+    let certfile = fs::File::open(crt_file_name)?;
+    let items = rustls_pemfile::read_all(&mut io::BufReader::new(certfile))?;
+
+    let der = match items.first().unwrap() {
+        rustls_pemfile::Item::X509Certificate(dat) => dat,
+        _ => return Ok(None),
+    };
+
+    let ta = webpki::TrustAnchor::try_from_cert_der(&der).unwrap();
+    let anchor = rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+        ta.subject,
+        ta.spki,
+        ta.name_constraints,
+    );
+    return Ok(Some(anchor));
+}

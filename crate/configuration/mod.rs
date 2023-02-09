@@ -242,6 +242,7 @@ pub enum DnsServerProtocol {
 #[derive(Debug)]
 pub enum OutboundClientProtocol {
     Http,
+    HttpOverTls,
 }
 
 #[derive(Debug)]
@@ -343,6 +344,7 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
             if let Some((u_prot, u_addr)) = u_origin.split_once("://") {
                 let prot = match u_prot {
                     "http" => OutboundClientProtocol::Http,
+                    "https" => OutboundClientProtocol::HttpOverTls,
                     _ => {
                         wd_log::log_warn_ln!("Invalid protocol {}", u_prot);
                         continue;

@@ -23,7 +23,6 @@ pub fn prepare_proxy_client_to_remote_host(
         let querier = DnsQueier::new(host.host());
         querier.query(query_callback, event_loop);
     } else {
-        println!("A -");
         let token = event_loop.token.get();
         let x = client.connect(token, event_loop, host, callback);
         if let Err(e) = x {

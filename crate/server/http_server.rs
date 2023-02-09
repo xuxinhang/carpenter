@@ -10,6 +10,7 @@ use std::net::{SocketAddr, IpAddr, Shutdown};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{create_transformer, Transformer, TransformerPortState, TransformerResult};
 use crate::transformer::httpforward::{HttpForwardTransformer};
+use crate::transformer::{TransformerUnit};
 use super::ProxyServer;
 use crate::proxy_client::{get_proxy_client, ProxyClientReadyCall};
 use crate::dnsresolver::{DnsResolveCallback};
@@ -261,6 +262,7 @@ impl ProxyClientReadyCall for ClientConnectCallback {
         event_loop: &mut EventLoop,
         peer_source: TcpStream,
         _peer_token: Token,
+        _client_transformer: Option<Box<dyn TransformerUnit>>, // TODO
     ) -> io::Result<()> {
         let next_tunnel = EstablishedTunnel::new(
             self.tunnel.token, self.tunnel.conn,

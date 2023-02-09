@@ -60,7 +60,7 @@ impl EventHandler for ClientShakingHandler {
             match self.conn.peer_addr() {
                 Ok(_addr) => {
                     wd_log::log_debug_ln!("ClientShakingHandler # peer connected. {}", _addr);
-                    if let Err(e) = self.readycall.proxy_client_ready(event_loop, self.conn, self.token) {
+                    if let Err(e) = self.readycall.proxy_client_ready(event_loop, self.conn, self.token, None) {
                         wd_log::log_warn_ln!("ClientShakingHandler # ready error {:?}", e);
                     }
                 }

@@ -1,5 +1,6 @@
 pub mod direct;
 pub mod http_client;
+pub mod http_over_tls_client;
 
 use std::io;
 use mio::Token;
@@ -7,6 +8,7 @@ use mio::net::TcpStream;
 use crate::event_loop::EventLoop;
 use crate::common::HostAddr;
 use crate::configuration::{OutboundAction, OutboundClientProtocol};
+use crate::transformer::{TransformerUnit};
 
 
 pub trait ProxyClient {
@@ -25,6 +27,7 @@ pub trait ProxyClientReadyCall {
         event_loop: &mut EventLoop,
         peer_source: TcpStream,
         peer_token: Token,
+        transformer: Option<Box<dyn TransformerUnit>>,
     ) -> std::io::Result<()>;
 }
 
@@ -45,6 +48,11 @@ pub fn get_proxy_client(host: &HostAddr) -> Result<(Box<dyn ProxyClient>, bool),
                 OutboundClientProtocol::Http => {
                     wd_log::log_debug_ln!("get_proxy_client :: use ProxyClientHttp");
                     (Box::new(http_client::ProxyClientHttp::new(server_config.addr.clone(), None)),
+                        server_config.dns_resolve)
+                }
+                OutboundClientProtocol::HttpOverTls => {
+                    wd_log::log_debug_ln!("get_proxy_client :: use ProxyClientHttpOverTls");
+                    (Box::new(http_over_tls_client::ProxyClientHttpOverTls::new(server_config.addr.clone(), None)),
                         server_config.dns_resolve)
                 }
             }

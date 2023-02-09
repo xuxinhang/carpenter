@@ -270,6 +270,7 @@ impl EventHandler for ShakingConnection {
                 peer_conn: None,
                 peer_token: None,
                 http_message: self.received_text,
+                client_transformer: None,
             };
             prepare_proxy_client_to_remote_host(host.clone(), event_loop, Box::new(proxy_client_callback));
             return;
@@ -290,6 +291,7 @@ struct ProxyServerResponseHandler {
     peer_conn: Option<TcpStream>,
     peer_token: Option<Token>,
     http_message: Vec<u8>,
+    client_transformer: Option<Box<dyn TransformerUnit>>,
 }
 
 impl ProxyClientReadyCall for ProxyServerResponseHandler {
@@ -298,9 +300,11 @@ impl ProxyClientReadyCall for ProxyServerResponseHandler {
         event_loop: &mut EventLoop,
         peer_source: TcpStream,
         peer_token: Token,
+        client_transformer: Option<Box<dyn TransformerUnit>>,
     ) -> std::io::Result<()> {
         self.peer_conn = Some(peer_source);
         self.peer_token = Some(peer_token);
+        self.client_transformer = client_transformer;
         event_loop.reregister(Box::new(*self)).unwrap();
         Ok(())
     }
@@ -334,6 +338,9 @@ impl EventHandler for ProxyServerResponseHandler {
                 tls: self.tls,
                 has_closed: false,
             }));
+            if let Some(t) = self.client_transformer {
+                tunnel_transformers.push(t);
+            }
 
             let tunnel_cell = Rc::new(RefCell::new(EstablishedTunnel::new(
                 tunnel_transformers,

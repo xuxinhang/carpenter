@@ -17,7 +17,7 @@ pub struct HttpForwardTransformer {
     scan_pos: u8,
     body_len_remained: usize,
     process_buffer: VecDeque<u8>,
-    expected_host: HostAddr,
+    _expected_host: HostAddr,
     transmit_closed: bool,
     receive_closed: bool,
 }
@@ -30,7 +30,7 @@ impl HttpForwardTransformer {
             scan_pos: HTTP_FORWARD_SCAN_POS_FIRST,
             body_len_remained: 0,
             process_buffer: VecDeque::with_capacity(32 * 1024),
-            expected_host: host,
+            _expected_host: host,
             transmit_closed: false,
             receive_closed: false,
         }
@@ -66,15 +66,7 @@ impl HttpForwardTransformer {
                         return TransformerResult::CustomError("Invalid http path suffix", None);
                     }
                     let uri_r = uri_r.unwrap();
-
-                    let host = HostAddr::from_str(&text[uri_m..uri_r]);
-                    if host.ok().as_ref() != Some(&self.expected_host) {
-                        // If client send a http message with different target host, just
-                        // terminate this tunnel. I have not found a good way to cancel this
-                        // limitation without huge modification to code.
-                        wd_log::log_warn_ln!("another host request is found in http forward");
-                        return TransformerResult::CustomError("different target host", None);
-                    }
+                    let _host = HostAddr::from_str(&text[uri_m..uri_r]).ok();
 
                     text.drain(uri_l..uri_r);
                     let byte_slice = text.as_bytes();
