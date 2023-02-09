@@ -286,19 +286,20 @@ impl TransformerUnit for SniRewriterTransformer {
     }
 
     fn transmit_read(&mut self, mut buf: &mut [u8]) -> TransformerUnitResult {
-        if self.remote_closing && self.remote_tls.wants_write() && self.remote_tls.wants_read() {
+        if self.remote_closing && !self.remote_tls.wants_write() && !self.remote_tls.wants_read() {
             self.remote_closed = true;
         }
         if self.remote_closed {
             return Err(TransformerUnitError::ClosedError());
         }
 
-        if self.transmit_buf.is_empty() && self.local_closed {
+        if self.transmit_buf.is_empty() && self.local_closed && !self.remote_closing {
             self.remote_tls.send_close_notify();
+            self.remote_closing = true;
         } else {
             let s = self.remote_tls.writer().write(self.transmit_buf.as_slice()).unwrap();
             self.transmit_buf.drain(0..s);
-            if self.transmit_buf.is_empty() && self.local_closed {
+            if self.transmit_buf.is_empty() && self.local_closed && !self.remote_closing {
                 self.remote_tls.send_close_notify();
                 self.remote_closing = true;
             }
@@ -346,19 +347,20 @@ impl TransformerUnit for SniRewriterTransformer {
     }
 
     fn receive_read(&mut self, mut buf: &mut [u8]) -> TransformerUnitResult {
-        if self.local_closing && self.local_tls.wants_write() && self.local_tls.wants_read() {
+        if self.local_closing && !self.local_tls.wants_write() && !self.local_tls.wants_read() {
             self.local_closed = true;
         }
         if self.local_closed {
             return Err(TransformerUnitError::ClosedError());
         }
 
-        if self.receive_buf.is_empty() && self.remote_closed {
+        if self.receive_buf.is_empty() && self.remote_closed && !self.remote_closing {
             self.local_tls.send_close_notify();
+            self.remote_closing = true;
         } else {
             let s = self.local_tls.writer().write(self.receive_buf.as_slice()).unwrap();
             self.receive_buf.drain(0..s);
-            if self.receive_buf.is_empty() && self.remote_closed {
+            if self.receive_buf.is_empty() && self.remote_closed && !self.remote_closing {
                 self.local_tls.send_close_notify();
                 self.local_closing = true;
             }
