@@ -12,7 +12,7 @@ use crate::transformer::{create_transformer_unit, TransformerUnit, TransformerUn
 use super::ProxyServer;
 use super::prepare::prepare_proxy_client_to_remote_host;
 use crate::proxy_client::{ProxyClientReadyCall};
-use crate::common::HostAddr;
+use crate::common::HostName;
 use super::tunnel::{TunnelMeta, EstablishedTunnel};
 use super::http_proxy_utils::parse_http_proxy_message;
 
@@ -20,14 +20,16 @@ use super::http_proxy_utils::parse_http_proxy_message;
 pub struct ProxyServerHttpOverTls {
     listener_socket: TcpListener,
     listener_token: Token,
+    server_hostname: HostName,
 }
 
 impl ProxyServerHttpOverTls {
-    pub fn new(addr: SocketAddr) -> std::io::Result<Self> {
+    pub fn new(addr: SocketAddr, hostname: HostName) -> std::io::Result<Self> {
         let listener_socket = TcpListener::bind(addr)?;
         Ok(Self {
             listener_socket,
             listener_token: Token(0),
+            server_hostname: hostname,
         })
     }
 }
@@ -58,7 +60,7 @@ impl EventHandler for ProxyServerHttpOverTls {
         let (conn, _) = x.unwrap();
         let conn_token = event_loop.token.get();
         let tunnel = Box::new(
-            ShakingConnection::new(conn, conn_token, "localhost".parse().unwrap()));
+            ShakingConnection::new(conn, conn_token, self.server_hostname.clone()));
         event_loop.register(tunnel).unwrap();
 
         // do not forget to receive the further connection
@@ -77,9 +79,9 @@ struct ShakingConnection {
 }
 
 impl ShakingConnection {
-    fn new(conn: TcpStream, conn_token: Token, _host: HostAddr) -> Self {
+    fn new(conn: TcpStream, conn_token: Token, host: HostName) -> Self {
         let (local_tls_cert_data, local_tls_pkey_data) =
-            get_cert_data_by_hostname(Some(_host.host())).unwrap();
+            get_cert_data_by_hostname(Some(host)).unwrap();
         let local_tls_conf = std::sync::Arc::new(
             ServerConfig::builder()
                 .with_safe_defaults()

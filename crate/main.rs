@@ -133,7 +133,10 @@ fn start_proxy_server(el: &mut EventLoop) -> usize {
                 }
             }
             InboundServerProtocol::HttpOverTls => {
-                let server = server::https_server::ProxyServerHttpOverTls::new(listen_addr).unwrap();
+                let server = server::https_server::ProxyServerHttpOverTls::new(
+                    listen_addr,
+                    cfg.hostname.clone().unwrap_or("localhost".parse().unwrap()),
+                ).unwrap();
                 if let Err(e) = server.launch(el) {
                     wd_log::log_error_ln!("Proxy server \"{}\" fail to listen on {}: {:?}", key, listen_addr, e);
                 } else {

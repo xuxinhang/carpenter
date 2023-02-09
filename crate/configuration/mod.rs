@@ -250,6 +250,7 @@ pub struct OutboundClient {
     pub protocol: OutboundClientProtocol,
     pub addr: SocketAddr,
     pub dns_resolve: bool,
+    pub hostname: Option<HostName>,
 }
 
 #[derive(Debug)]
@@ -262,6 +263,7 @@ pub enum InboundServerProtocol {
 pub struct InboundServer {
     pub protocol: InboundServerProtocol,
     pub addr: SocketAddr,
+    pub hostname: Option<HostName>,
 }
 
 #[derive(Debug)]
@@ -320,7 +322,10 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
                 _ => continue,
             };
             let addr = SocketAddr::from_str(u_addr).unwrap();
-            cfg.inbound_server.insert(n.to_string(), InboundServer { protocol: prot, addr });
+            let u_hostname = u.get("hostname")
+                .map_or(None, |x| Some(x.as_str().unwrap().parse().unwrap()));
+            cfg.inbound_server.insert(n.to_string(), InboundServer {
+                protocol: prot, addr, hostname: u_hostname });
         }
     }
 
@@ -338,8 +343,8 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
                 continue;
             }
             let u_origin = u_origin.unwrap().as_str().unwrap();
-
             let u_dns_resolve = u.get("dns_resolve").map_or(false, |x| x.as_bool().unwrap());
+            let u_hostname = u.get("hostname").map_or(None, |x| Some(x.as_str().unwrap().parse().unwrap()));
 
             if let Some((u_prot, u_addr)) = u_origin.split_once("://") {
                 let prot = match u_prot {
@@ -359,6 +364,7 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
                     protocol: prot,
                     addr: addr.unwrap(),
                     dns_resolve: u_dns_resolve,
+                    hostname: u_hostname,
                 });
             } else {
                 wd_log::log_warn_ln!("'origin' field is invalid '{}'", u_origin);

@@ -52,8 +52,13 @@ pub fn get_proxy_client(host: &HostAddr) -> Result<(Box<dyn ProxyClient>, bool),
                 }
                 OutboundClientProtocol::HttpOverTls => {
                     wd_log::log_debug_ln!("get_proxy_client :: use ProxyClientHttpOverTls");
-                    (Box::new(http_over_tls_client::ProxyClientHttpOverTls::new(server_config.addr.clone(), None)),
-                        server_config.dns_resolve)
+                    (
+                        Box::new(http_over_tls_client::ProxyClientHttpOverTls::new(
+                            server_config.addr.clone(),
+                            server_config.hostname.clone(),
+                        )),
+                        server_config.dns_resolve
+                    )
                 }
             }
         }

@@ -8,7 +8,7 @@ use rustls::ClientConnection;
 use super::{ProxyClient, ProxyClientReadyCall};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{TransformerUnit, TransformerUnitResult, TransformerUnitError};
-use crate::common::HostAddr;
+use crate::common::{HostAddr, HostName};
 use crate::certmgr::certstorage::get_other_trust_anchor_data;
 
 
@@ -23,14 +23,14 @@ fn check_response(buf: &[u8]) -> bool {
 
 pub struct ProxyClientHttpOverTls {
     server_addr: SocketAddr,
-    _hostname: Option<String>,
+    hostname: Option<HostName>,
 }
 
 impl ProxyClientHttpOverTls {
-    pub fn new(server_addr: SocketAddr, hostname: Option<String>) -> Self {
+    pub fn new(server_addr: SocketAddr, hostname: Option<HostName>) -> Self {
         Self {
             server_addr,
-            _hostname: hostname,
+            hostname,
         }
     }
 }
@@ -63,14 +63,19 @@ impl ProxyClient for ProxyClientHttpOverTls {
             root_store.add_server_trust_anchors(ota.iter().map(|ta| ta.clone()));
         }
 
-        let config = rustls::ClientConfig::builder()
+        let mut config = rustls::ClientConfig::builder()
             .with_safe_defaults()
             .with_root_certificates(root_store)
             .with_no_client_auth();
+        if self.hostname.is_none() {
+            config.enable_sni = false;
+        }
         let tls = ClientConnection::new(
             Arc::new(config),
-            "localhost".try_into().unwrap(),
+            self.hostname.clone().map_or("localhost".to_string(), |x| x.to_string()).as_str().try_into()
+                .unwrap_or("localhost".try_into().unwrap()),
         ).unwrap();
+
 
         let mut text = String::new();
         text.push_str(&format!("CONNECT {} HTTP/1.1\r\n", tunnel_addr.to_string()));

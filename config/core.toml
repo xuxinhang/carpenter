@@ -9,6 +9,7 @@ listen = "http://0.0.0.0:7890"
 [inbound.secure]
 enable = true
 listen = "https://0.0.0.0:7899"
+hostname = "localhost"
 
 
 [outbound.fanq]
