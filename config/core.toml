@@ -14,7 +14,11 @@ hostname = "localhost"
 
 [outbound.fanq]
 enable = true
-origin = "https://127.0.0.1:7898"
+origin = "http://127.0.0.1:10809"
+
+[outbound.tor]
+enable = true
+origin = "http://127.0.0.1:8118"
 
 
 [log]
@@ -27,5 +31,5 @@ load-local-host-file = true
 
 
 [dns-server]
-normal = "udp://223.5.5.5"
+normal = "udp://114.114.114.114"
 secure = "tls://101.101.101.101"

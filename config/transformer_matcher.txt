@@ -8,7 +8,8 @@ wikipedia.org:443  +sni _
 wiki*.org:443 +sni _
 *.wiki*.org:443 +sni _
 
-gist.github.com:443  +sni github.com
+gist.github.com:443  +sni _
+github.com:443  +sni _
 
 ..steampowered.com:443 +sni _
 ..steamcommunity.com:443 +sni _

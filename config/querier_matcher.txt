@@ -2,11 +2,12 @@
 
 #*.sina.cn +dns dot
 
-..wikipedia.org +to 91.198.174.192
+..wikipedia.org +to 208.80.153.224
 # 103.102.166.224 208.80.153.224 91.198.174.192 185.15.58.224
 upload.wikimedia.org +to 208.80.153.240
 *.wiki*.org +to wikipedia.org
 
+github.com +dns secure
 gist.github.com +to github.com
 
 ..steamcommunity.com +dns secure
@@ -18,3 +19,6 @@ gist.github.com +to github.com
 ..archive.org +dns secure
 
 ..startpage.com +dns secure
+
+..rust-lang.org +dns secure
+*.discourse-cdn.com +dns secure

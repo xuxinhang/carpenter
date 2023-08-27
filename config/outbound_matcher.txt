@@ -1,1 +1,4 @@
 *:0 +direct
+
+*.google.com:0 +server fanq
+t.me:0 +server fanq
