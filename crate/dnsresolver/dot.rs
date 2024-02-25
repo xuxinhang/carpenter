@@ -238,17 +238,19 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                 }
 
                 if !prof.tls.is_handshaking() {
-                    let msg_dat = prof.pending_dns_messages.remove(0);
-                    let msg_len = msg_dat.len();
-                    match prof.tls.writer().write(&msg_dat) {
-                        Ok(write_size) => {
-                            if write_size < msg_len {
-                                prof.pending_dns_messages.insert(0, msg_dat[write_size..].to_vec());
+                    if !prof.pending_dns_messages.is_empty() {
+                        let msg_dat = prof.pending_dns_messages.remove(0);
+                        let msg_len = msg_dat.len();
+                        match prof.tls.writer().write(&msg_dat) {
+                            Ok(write_size) => {
+                                if write_size < msg_len {
+                                    prof.pending_dns_messages.insert(0, msg_dat[write_size..].to_vec());
+                                }
                             }
-                        }
-                        Err(e) => {
-                            println!("DnsDotResolver # profile.tls.write_all error {:?}", e);
-                            return;
+                            Err(e) => {
+                                println!("DnsDotResolver # profile.tls.write_all error {:?}", e);
+                                return;
+                            }
                         }
                     }
                 }
