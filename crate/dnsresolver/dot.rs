@@ -91,7 +91,9 @@ impl DnsResolver for DnsDotResolver {
         dns_msg.insert(0, (msg_len & 0xff) as u8); // Extra bytes via DNS over TCP
         dns_msg.insert(0, (msg_len >> 8) as u8);
 
+        println!("dns_msg {:?}", dns_msg.len());
         profile.pending_dns_messages.push(dns_msg);
+
 
         let profile_ptr = Rc::new(RefCell::new(profile));
         // let handler = DnsDotResolveRemoteReadableHandler {
@@ -238,19 +240,24 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                 }
 
                 if !prof.tls.is_handshaking() {
-                    let msg_dat = prof.pending_dns_messages.remove(0);
-                    let msg_len = msg_dat.len();
-                    match prof.tls.writer().write(&msg_dat) {
-                        Ok(write_size) => {
-                            if write_size < msg_len {
-                                prof.pending_dns_messages.insert(0, msg_dat[write_size..].to_vec());
+                    if prof.pending_dns_messages.is_empty() {
+                        // do nothing
+                    } else {
+                        let msg_dat = prof.pending_dns_messages.remove(0);
+                        let msg_len = msg_dat.len();
+                        match prof.tls.writer().write(&msg_dat) {
+                            Ok(write_size) => {
+                                if write_size < msg_len {
+                                    prof.pending_dns_messages.insert(0, msg_dat[write_size..].to_vec());
+                                }
+                            }
+                            Err(e) => {
+                                println!("DnsDotResolver # profile.tls.write_all error {:?}", e);
+                                return;
                             }
                         }
-                        Err(e) => {
-                            println!("DnsDotResolver # profile.tls.write_all error {:?}", e);
-                            return;
-                        }
                     }
+                    println!("prof.pending_dns_messages {:?}", prof.pending_dns_messages.len())
                 }
             }
         }
