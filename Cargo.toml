@@ -14,6 +14,7 @@ toml = "0.5.8"
 serde = "1.0"
 serde_derive = "1.0.117"
 domain = "0.6.1"
+base64 = "0.13.1"
 
 
 [[bin]]

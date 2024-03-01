@@ -11,6 +11,11 @@ use crate::transformer::{create_transformer_unit, TransformerUnit};
 use crate::proxy_client::ProxyClientReadyCall;
 use super::tunnel::{TunnelMeta, EstablishedTunnel};
 use super::ProxyServer;
+use crate::utils::http_message::parse_http_header;
+use crate::authorization::httpauth::server::{
+    HttpAuthServerSessionManager,
+    get_default_server_challenges,
+};
 
 
 pub struct HttpProxyServer {
@@ -57,10 +62,12 @@ impl EventHandler for HttpProxyServer {
         }
 
         let (conn, _address) = x.unwrap();
+        conn.set_nodelay(true).unwrap();
         let h = ClientRequestHandler {
             tunnel: ShakingZeroTunnel{
                 token: event_loop.token.get(),
-                conn: conn,
+                conn,
+                auth_sess: HttpAuthServerSessionManager::new(),
             }
         };
 
@@ -78,6 +85,7 @@ impl EventHandler for HttpProxyServer {
 struct ShakingZeroTunnel {
     token: Token,
     conn: TcpStream,
+    auth_sess: HttpAuthServerSessionManager,
 }
 
 struct ShakingHalfTunnel {
@@ -91,9 +99,31 @@ struct ClientRequestHandler {
     tunnel: ShakingZeroTunnel,
 }
 
+fn get_http_407_message() -> String {
+    let mut msg_s = String::from("HTTP/1.1 407 Proxy Authentication Required\r\n");
+    let challenge_list = get_default_server_challenges();
+    for c in challenge_list {
+        let s = c.to_string();
+        if s.is_empty() { continue; } // ensure not HttpAuthChallengeMessage::Empty
+        msg_s.push_str("Proxy-Authenticate: ");
+        msg_s.push_str(&s);
+        msg_s.push_str("\r\n");
+    }
+    // TODO: How-to?
+    // msg_s.push_str("Connection: Close\r\n");
+    // msg_s.push_str("Proxy-Connection: Close\r\n");
+    msg_s.push_str("Content-Length: 0\r\n");
+    msg_s.push_str("\r\n");
+    return msg_s;
+}
+
 impl EventHandler for ClientRequestHandler {
     fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         registry.register(&mut self.tunnel.conn, self.tunnel.token, Interest::READABLE)
+    }
+
+    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+        registry.reregister(&mut self.tunnel.conn, self.tunnel.token, Interest::READABLE)
     }
 
     fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
@@ -119,15 +149,37 @@ impl EventHandler for ClientRequestHandler {
             let r = super::http_proxy_utils::parse_http_proxy_message(&msg_buf);
             if let Err(e) = r {
                 wd_log::log_warn_ln!("ClientRequestHandler # {}", e);
+                // println!("{:?}", std::str::from_utf8(&msg_buf).unwrap());
                 shutdown_conn();
                 return;
             }
             let (msg_header_length, host, use_http_tunnel_mode) = r.unwrap();
 
+
+            // Proxy-Authorization
+            let (_, headers) = parse_http_header(&msg_buf[..msg_header_length]).unwrap();
+            println!("{:?}", headers);
+            let auth_result = self.tunnel.auth_sess.authenticate_from_str(
+                headers.get("Proxy-Authorization").map(|x| x.as_str()));
+
             // Drop this CONNECT message if using http tunnel mode
-            if use_http_tunnel_mode {
+            // Drop any message if authorization failed
+            if use_http_tunnel_mode || !auth_result.is_ok() {
+                println!("http tunnel Flush");
                 let mut trash = vec![0u8; msg_header_length];
                 conn.read(&mut trash).unwrap();
+            }
+
+            if let Ok(_session_nc) = auth_result {
+                // continue
+                wd_log::log_info_ln!("Proxy-Authorization Pass.");
+            } else {
+                wd_log::log_info_ln!("Proxy-Authorization Unauthorized.");
+                let next_handler = Box::new(ProxyServerResponseAuthenticateHandler {
+                    tunnel: self.tunnel,
+                });
+                event_loop.reregister(next_handler).unwrap();
+                return;
             }
 
             // This tunnel is now Shaking-Half
@@ -156,6 +208,48 @@ impl EventHandler for ClientRequestHandler {
         }
     }
 }
+
+
+struct ProxyServerResponseAuthenticateHandler {
+    tunnel: ShakingZeroTunnel,
+}
+
+impl EventHandler for ProxyServerResponseAuthenticateHandler {
+    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+        // let tunnel = &mut self.tunnel;
+        registry.register(&mut self.tunnel.conn, self.tunnel.token, Interest::WRITABLE)
+    }
+
+    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+        // let tunnel = &mut self.tunnel;
+        registry.reregister(&mut self.tunnel.conn, self.tunnel.token, Interest::WRITABLE)
+    }
+
+    fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
+        if event.is_writable() {
+            let message = get_http_407_message();
+            let conn = &mut self.tunnel.conn;
+            if let Err(e) = conn.write(message.as_bytes()) {
+                wd_log::log_warn_ln!("ProxyServerResponseHandler # fail to write {:?}", e);
+                return;
+            }
+
+            // TODO: WWW-Authenticate
+            // TODO: is_writable?
+            // println!("Proxy-Authenticate write.");
+
+            // let conn = &mut self.tunnel.conn;
+            // conn.write(m.as_bytes()).unwrap();
+            // conn.flush().unwrap();
+
+            event_loop.reregister(Box::new(ClientRequestHandler {
+                tunnel: self.tunnel,
+            })).unwrap();
+        }
+    }
+}
+
+
 
 
 struct ClientConnectCallback {

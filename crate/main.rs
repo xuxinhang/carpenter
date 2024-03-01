@@ -10,6 +10,8 @@ pub mod dnsresolver;
 pub mod global;
 pub mod utils;
 pub mod certmgr;
+pub mod authorization;
+pub mod credential;
 
 
 use std::rc::Rc;
