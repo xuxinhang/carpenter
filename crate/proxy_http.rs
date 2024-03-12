@@ -349,7 +349,7 @@ impl ProxyQueryDoneCallback {
         let transformer_boxed: Box<dyn TunnelTransformer> = match transformer_config {
             Some(TransformerAction::SniTransformer(s)) => {
                 let (sni_enable, sni_value) = match s.as_str() {
-                    "_" => (false, request_hostname),
+                    "_" => (true, "localhost"),
                     "*" => (true, request_hostname),
                     h => (true, h),
                 };

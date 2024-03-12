@@ -12,26 +12,32 @@ pub fn prepare_proxy_client_to_remote_host(
     event_loop: &mut EventLoop,
     callback: Box<dyn ProxyClientReadyCall>,
 ) {
-    let (client, is_dns_resolve_required) = get_proxy_client(&host).unwrap();
-
-    if is_dns_resolve_required {
-        let query_callback = Box::new(RemoteHostQueryDoneCallback {
-            remote_host: host.clone(),
-            proxy_client: client,
-            proxy_client_callback: callback,
-        });
-        let querier = DnsQueier::new(host.host());
-        querier.query(query_callback, event_loop);
-    } else {
-        let token = event_loop.token.get();
-        let x = client.connect(token, event_loop, host, callback);
-        if let Err(e) = x {
-            wd_log::log_warn_ln!("ProxyQueryDoneHandler # ProxyClientDirect::connect error {:?}", e);
-            return;
+    match get_proxy_client(&host) {
+        Ok((client, is_dns_resolve_required)) => {
+            if is_dns_resolve_required {
+                let query_callback = Box::new(RemoteHostQueryDoneCallback {
+                    remote_host: host.clone(),
+                    proxy_client: client,
+                    proxy_client_callback: callback,
+                });
+                let querier = DnsQueier::new(host.host());
+                querier.query(query_callback, event_loop);
+            } else {
+                let token = event_loop.token.get();
+                let x = client.connect(token, event_loop, host, callback);
+                if let Err(e) = x {
+                    wd_log::log_warn_ln!("ProxyQueryDoneHandler # ProxyClientDirect::connect error {:?}", e);
+                    return;
+                }
+            }
+        },
+        Err(e) => {
+            // Handle the error appropriately, e.g., log it, return it, etc.
+            wd_log::log_error_ln!("Failed to get proxy client: {:?}", e);
+            // Depending on the function's return type, you might return an error here
         }
     }
 }
-
 struct RemoteHostQueryDoneCallback {
     remote_host: HostAddr,
     proxy_client: Box<dyn ProxyClient>,
