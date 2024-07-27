@@ -240,9 +240,7 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                 }
 
                 if !prof.tls.is_handshaking() {
-                    if prof.pending_dns_messages.is_empty() {
-                        // do nothing
-                    } else {
+                    if !prof.pending_dns_messages.is_empty() {
                         let msg_dat = prof.pending_dns_messages.remove(0);
                         let msg_len = msg_dat.len();
                         match prof.tls.writer().write(&msg_dat) {
