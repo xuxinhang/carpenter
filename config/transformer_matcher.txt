@@ -10,6 +10,7 @@ wiki*.org:443 +sni _
 
 gist.github.com:443  +sni _
 github.com:443  +sni _
+..githubusercontent.com:443 +sni _
 
 ..steampowered.com:443 +sni _
 ..steamcommunity.com:443 +sni _
@@ -22,6 +23,11 @@ github.com:443  +sni _
 
 ..startpage.com:443 +sni _
 
+
+..apkpure.net:443 +sni _
+..apk4fun.com:443 +sni _
+..apkmirror.com:443 +sni _
+..uptodown.com:443 +sni _
 
 
 

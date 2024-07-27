@@ -19,9 +19,9 @@ impl EventTokenPool {
 
 
 pub trait EventHandler {
-    fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
     fn register(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
+    fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
 }
 
 

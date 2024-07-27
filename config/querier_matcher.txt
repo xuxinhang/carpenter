@@ -22,3 +22,8 @@ gist.github.com +to github.com
 
 ..rust-lang.org +dns secure
 *.discourse-cdn.com +dns secure
+
+..apkpure.net +dns secure
+..apk4fun.com +dns secure
+..apkmirror.com +dns secure
+..uptodown.com +dns secure

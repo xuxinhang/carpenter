@@ -91,7 +91,9 @@ impl DnsResolver for DnsDotResolver {
         dns_msg.insert(0, (msg_len & 0xff) as u8); // Extra bytes via DNS over TCP
         dns_msg.insert(0, (msg_len >> 8) as u8);
 
+        println!("dns_msg {:?}", dns_msg.len());
         profile.pending_dns_messages.push(dns_msg);
+
 
         let profile_ptr = Rc::new(RefCell::new(profile));
         // let handler = DnsDotResolveRemoteReadableHandler {
@@ -253,6 +255,7 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                             }
                         }
                     }
+                    println!("prof.pending_dns_messages {:?}", prof.pending_dns_messages.len())
                 }
             }
         }

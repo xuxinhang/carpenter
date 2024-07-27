@@ -2,3 +2,4 @@
 
 *.google.com:0 +server fanq
 t.me:0 +server fanq
+*.chrome.com:0 +server fanq
