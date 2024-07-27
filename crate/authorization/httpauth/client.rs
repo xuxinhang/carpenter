@@ -2,12 +2,11 @@ use crate::authorization::httpauth::{
     HttpAuthChallengeMessage,
     HttpAuthCredentialMessage,
 };
-use super::HttpAuthError;
 
-use crate::credential::{CredentialStore, Credential, load_client_credential_store};
+use crate::credential::{CredentialStore, load_client_credential_store};
 
 pub struct HttpAuthClientSession {
-    credential_store: CredentialStore,
+    credential_store: CredentialStore, // only the first one is valid
 }
 
 impl HttpAuthClientSession {
@@ -17,10 +16,20 @@ impl HttpAuthClientSession {
         }
     }
 
-    pub fn get_credential(challenges: Vec<HttpAuthChallengeMessage>)
-        -> HttpAuthCredentialMessage {
-    	HttpAuthCredentialMessage::Empty
+    pub fn get_credential(&self, challenges: Vec<HttpAuthChallengeMessage>)
+        -> Option<HttpAuthCredentialMessage> {
+        for challenge in challenges {
+            match challenge {
+                HttpAuthChallengeMessage::Empty => {
+                    return Some(HttpAuthCredentialMessage::Empty);
+                }
+                HttpAuthChallengeMessage::Basic { realm: _ } => {
+                    if let Some(cre) = self.credential_store.get_one_credential() {
+                        return Some(HttpAuthCredentialMessage::Basic(cre.clone()));
+                    }
+                }
+            }
+        }
+        None
     }
 }
-
-

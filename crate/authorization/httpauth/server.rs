@@ -6,12 +6,12 @@ use super::{
     HttpAuthCredentialMessage,
     HttpAuthChallengeMessage,
 };
-use crate::credential::{CredentialStore, Credential, load_server_credential_store};
+use crate::credential::{CredentialStore, load_server_credential_store};
 
 
 pub fn get_allowed_scheme_methods() -> Vec<HttpAuthSchemeMethod> {
     vec![
-        // HttpAuthSchemeMethod::Empty,
+        HttpAuthSchemeMethod::Empty,
         HttpAuthSchemeMethod::Basic,
     ]
 }
@@ -73,8 +73,8 @@ impl HttpAuthServerSessionManager {
                     Err(HttpAuthError::InvalidIdentification)
                 }
             },
-            HttpAuthCredentialMessage::Basic(maybe_credential_s) => {
-                println!("{:?}", maybe_credential_s);
+            HttpAuthCredentialMessage::Basic(maybe_credential) => {
+                /*
                 if !is_scheme_method_allowed(HttpAuthSchemeMethod::Basic) {
                     return Err(HttpAuthError::InvalidIdentification);
                 }
@@ -87,7 +87,9 @@ impl HttpAuthServerSessionManager {
                     username: x.0.to_string(),
                     password: x.1.to_string(),
                 };
+                */
 
+                println!("{:?}", maybe_credential);
                 if self.credential_store.verify_credential(maybe_credential).is_none() {
                     Err(HttpAuthError::InvalidIdentification)
                 } else {

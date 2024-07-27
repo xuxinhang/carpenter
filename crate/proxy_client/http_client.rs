@@ -6,6 +6,7 @@ use mio::event::{Event};
 use super::{ProxyClient, ProxyClientReadyCall};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::common::HostAddr;
+use crate::authorization::httpauth::client::HttpAuthClientSession;
 
 
 pub struct ProxyClientHttp {
@@ -28,28 +29,33 @@ impl ProxyClient for ProxyClientHttp {
         readycall: Box<dyn ProxyClientReadyCall>,
     ) -> io::Result<()> {
         let conn = TcpStream::connect(self.server_addr)?;
-        let next_handler = ClientConnectedHandler {
+
+        let auth_sess = HttpAuthClientSession::new();
+
+        let next_handler = ClientSocketEstablishedHandler {
             token,
             conn,
             tunnel_addr,
             _hostname: self.hostname.clone(),
             readycall,
+            auth_sess,
         };
         event_loop.register(Box::new(next_handler))?;
         Ok(())
     }
 }
 
-struct ClientConnectedHandler {
+struct ClientSocketEstablishedHandler {
     token: Token,
     conn: TcpStream,
     tunnel_addr: HostAddr,
     _hostname: Option<String>,
     readycall: Box<dyn ProxyClientReadyCall>,
+    auth_sess: HttpAuthClientSession,
 }
 
 
-impl EventHandler for ClientConnectedHandler {
+impl EventHandler for ClientSocketEstablishedHandler {
     fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         registry.register(&mut self.conn, self.token, Interest::WRITABLE)
     }
@@ -77,9 +83,9 @@ impl EventHandler for ClientConnectedHandler {
                         return;
                     }
 
-                    event_loop.reregister(Box::new(ClientShakingHandler {
+                    event_loop.reregister(Box::new(ClientRemoteResponseHandler {
                         token: self.token,
-                        conn: conn,
+                        conn,
                         readycall: self.readycall,
                     })).unwrap();
                 }
@@ -95,13 +101,13 @@ impl EventHandler for ClientConnectedHandler {
 }
 
 
-struct ClientShakingHandler {
+struct ClientRemoteResponseHandler {
     token: Token,
     conn: TcpStream,
     readycall: Box<dyn ProxyClientReadyCall>,
 }
 
-impl EventHandler for ClientShakingHandler {
+impl EventHandler for ClientRemoteResponseHandler {
     fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         registry.register(&mut self.conn, self.token, Interest::READABLE)
     }
@@ -115,6 +121,9 @@ impl EventHandler for ClientShakingHandler {
         if event.is_readable() {
             let mut buf = vec![0u8; 32*1024];
             let _read_size = conn.read(&mut buf);
+            
+            
+            
             if buf.starts_with("HTTP/1.1 200".as_bytes()) {
                 if let Err(e) = self.readycall.proxy_client_ready(event_loop, conn, self.token, None) {
                     wd_log::log_warn_ln!("ClientShakingHandler # ready error {:?}", e);

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 
+#[derive(Clone, Debug)]
 pub struct Credential {
     pub username: String,
     pub password: String,
@@ -22,7 +23,7 @@ impl CredentialStore {
         self.credentials.insert(cre.username.to_string(), cre)
     }
 
-    pub fn verify_credential(&self, maybe_cre: Credential)
+    pub fn verify_credential(&self, maybe_cre: &Credential)
                              -> Option<&Credential> {
         if let Some(cre) = self.credentials.get(&maybe_cre.username) {
             if cre.password == maybe_cre.password {
@@ -31,6 +32,10 @@ impl CredentialStore {
         }
 
         None
+    }
+
+    pub fn get_one_credential(&self) -> Option<&Credential> {
+        self.credentials.values().next()
     }
 }
 

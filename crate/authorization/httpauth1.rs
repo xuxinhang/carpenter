@@ -1,5 +1,10 @@
 use std::str::{FromStr};
-use crate::credential::Credential;
+use std::collections::HashMap;
+use crate::credential::{
+    CredentialStore,
+    Credential,
+    load_server_credential_store,
+};
 
 
 #[derive(Debug)]
@@ -38,79 +43,41 @@ impl FromStr for HttpAuthenticationDigestAlgorithm {
 }
  */
 
-#[derive(PartialEq)]
-pub enum HttpAuthSchemeMethod {
+
+pub struct HttpAuthChallengeMessage {
+    realm: String, // realm is always available among all schemes
+    scheme: HttpAuthChallengeMessageScheme,
+}
+
+enum HttpAuthChallengeMessageScheme {
     Empty,
     Basic,
-    // Digest(HttpAuthSchemeDigestAlgorithm)
-}
-
-
-enum Base64UserPassEncodingError {
-    ColonNotAllowedInUsername,
-    // TODO: is non-ASCII TEXT is allowed?
-    // see: https://datatracker.ietf.org/doc/html/rfc2617#section-2
-}
-
-fn encode_base64_user_pass(c: &Credential) -> Result<String, Base64UserPassEncodingError> {
-    if c.username.find(':').is_some() {
-        return Err(Base64UserPassEncodingError::ColonNotAllowedInUsername);
-    }
-
-    Ok(base64::encode(format!("{}:{}", c.username, c.password)))
-}
-
-enum Base64UserPassDecodingError { ColonNotFound, Base64DecodeError }
-fn decode_base64_user_pass(s: &str) -> Result<Credential, Base64UserPassDecodingError> {
-    let cre_b = if let Ok(cre_b) = base64::decode(s) {
-        cre_b
-    } else {
-        return Err(Base64UserPassDecodingError::Base64DecodeError);
-    };
-
-    // TODO: What's the encoding of user-pass according to RFC 2617?
-    let cre_s = if let Ok(cre_s) = String::from_utf8(cre_b) {
-        cre_s
-    } else {
-        return Err(Base64UserPassDecodingError::Base64DecodeError);
-    };
-
-    if let Some((u_s, p_s)) = cre_s.split_once(':') {
-        Ok(Credential {
-            username: u_s.to_string(),
-            password: p_s.to_string(),
-        })
-    } else {
-        Err(Base64UserPassDecodingError::ColonNotFound)
-    }
-}
-
-pub enum HttpAuthChallengeMessage {
-    Empty,
-    Basic { realm: String },
     // Digest(nonce, opaque, qop, algorithm),
 }
 
 impl HttpAuthChallengeMessage {
     pub fn _new() -> Self {
-        HttpAuthChallengeMessage::Empty
-        // realm: "Hello.Carpenter".to_string(),
+        HttpAuthChallengeMessage {
+            realm: "Hello.Carpenter".to_string(),
+            scheme: HttpAuthChallengeMessageScheme::Empty,
+        }
     }
 }
 
 impl ToString for HttpAuthChallengeMessage {
     fn to_string(&self) -> String {
-        match self {
-            Self::Empty => String::from(""),
-            Self::Basic { realm } =>
-                format!("Basic realm=\"{}\"", realm), // TODO: check characters
+        match self.scheme {
+            HttpAuthChallengeMessageScheme::Empty => "".to_string(),
+            HttpAuthChallengeMessageScheme::Basic =>
+                // TODO: check invalid chars in realm
+                format!("Basic realm=\"{}\"", self.realm),
         }
     }
 }
 
 pub enum HttpAuthCredentialMessage {
     Empty,
-    Basic(Credential),
+    Basic(String),
     // Digest(realm, uri, username, algorithm, nonce, nc, c-nonce, qop, response, opaque),
 }
 
@@ -137,10 +104,14 @@ impl FromStr for HttpAuthCredentialMessage {
                 if view.basic.is_empty() || !view.params.is_empty() {
                     return Err(Self::Err::UnexpectedMessageFormat);
                 }
-                match decode_base64_user_pass(&view.basic[..]) {
-                    Ok(cre) => Ok(Self::Basic(cre)),
-                    Err(_) => Err(HttpAuthError::InvalidParameterValue),
+
+                if let Ok(cre_b) = base64::decode(view.basic) {
+                    if let Ok(cre_s) = String::from_utf8(cre_b) {
+                        return Ok(Self::Basic(cre_s));
+                    }
                 }
+
+                return Err(HttpAuthError::InvalidParameterValue);
             },
             _ => {
                 return Err(HttpAuthError::UnsupportedScheme);
@@ -149,6 +120,15 @@ impl FromStr for HttpAuthCredentialMessage {
     }
 }
 
+
+pub fn create_default_challenge_list() -> Vec<HttpAuthChallengeMessage> {
+    let realm = "Hello,Carpenter!";
+    let chg = HttpAuthChallengeMessage {
+        realm: realm.to_string(),
+        scheme: HttpAuthChallengeMessageScheme::Basic,
+    };
+    return vec![chg];
+}
 
 
 struct HttpAuthMessage {
@@ -210,9 +190,9 @@ impl FromStr for HttpAuthMessage {
 
             let is_qdtext = |c: char|
                 c == '\t' || c == ' ' || c == '\x21' ||
-                    '\x23' <= c && c <= '\x5B' ||
-                    '\x5D' <= c && c <= '\x7E' ||
-                    '\u{80}' <= c && c <= '\u{FF}'; // TODO: What's that?
+                '\x23' <= c && c <= '\x5B' ||
+                '\x5D' <= c && c <= '\x7E' ||
+                '\u{80}' <= c && c <= '\u{FF}'; // TODO: What's that?
 
             let is_qpair = |c: char|
                 c == '\t' || c == ' ' || !c.is_control() || '\u{80}' <= c && c <= '\u{FF}';
@@ -296,6 +276,67 @@ impl FromStr for HttpAuthMessage {
             basic: basic_s.to_string(),
             params,
         })
+    }
+}
+
+
+pub struct HttpAuthenticationSessionManager {
+    allow_anonymous: bool,
+    credential_store: CredentialStore,
+}
+
+impl HttpAuthenticationSessionManager {
+    pub fn new() -> Self {
+        Self {
+            allow_anonymous: false,
+            credential_store: load_server_credential_store(),
+        }
+    }
+
+    pub fn authenticate_from_str(&self, authorization_field: Option<&str>)
+        -> Result<usize, HttpAuthError> {
+        let auth = if let Some(s) = authorization_field {
+            println!("A {:?}", s);
+            println!("B {:?}", HttpAuthCredentialMessage::from_str(s).is_err());
+            HttpAuthCredentialMessage::from_str(s)
+                .unwrap_or(HttpAuthCredentialMessage::new())
+        } else {
+            HttpAuthCredentialMessage::new()
+        };
+
+        self.authenticate(&auth)
+    }
+
+    pub fn authenticate(&self, auth: &HttpAuthCredentialMessage)
+        -> Result<usize, HttpAuthError> {
+        match auth {
+            HttpAuthCredentialMessage::Empty => {
+                if self.allow_anonymous {
+                    Ok(0)
+                } else {
+                    Err(HttpAuthError::InvalidIdentification)
+                }
+            },
+            HttpAuthCredentialMessage::Basic(maybe_credential_s) => {
+                println!("{:?}", maybe_credential_s);
+                let x = maybe_credential_s.split_once(':');
+                if x.is_none() {
+                    return Err(HttpAuthError::InvalidIdentification);
+                }
+                let x = x.unwrap();
+                let maybe_credential = Credential {
+                    username: x.0.to_string(),
+                    password: x.1.to_string(),
+                };
+
+                if self.credential_store.verify_credential(maybe_credential).is_none() {
+                    Err(HttpAuthError::InvalidIdentification)
+                } else {
+                    Ok(0)
+                }
+            },
+            // _ => Err(HttpAuthenticationError::UnsupportedScheme),
+        }
     }
 }
 
