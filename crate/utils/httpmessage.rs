@@ -157,7 +157,6 @@ fn consume_request_line(s: &str) -> Option<(&str, HttpMethod, HttpRequestTarget,
     let s = consume_space(s)?;
     let (s, target) = consume_target(s)?;
     let s = consume_space(s)?;
-    println!("{:?}", s);
     let (s, version) = consume_http_version(s)?;
     let s = consume_crlf(s)?;
     Some((s, method, target, version))

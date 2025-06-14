@@ -3,7 +3,7 @@ use std::net::{SocketAddr};
 use mio::{Token, Interest};
 use mio::net::{TcpStream};
 use mio::event::{Event};
-use super::{ProxyClient, ProxyClientReadyCall};
+use super::{ProxyClient, RemoteReadyCallback};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::common::HostAddr;
 use crate::authorization::httpauth::client::HttpAuthClientSession;
@@ -26,7 +26,7 @@ impl ProxyClient for ProxyClientHttp {
         token: Token,
         event_loop: &mut EventLoop,
         tunnel_addr: HostAddr,
-        readycall: Box<dyn ProxyClientReadyCall>,
+        readycall: Box<dyn RemoteReadyCallback>,
     ) -> io::Result<()> {
         let conn = TcpStream::connect(self.server_addr)?;
 
@@ -50,7 +50,7 @@ struct ClientSocketEstablishedHandler {
     conn: TcpStream,
     tunnel_addr: HostAddr,
     _hostname: Option<String>,
-    readycall: Box<dyn ProxyClientReadyCall>,
+    readycall: Box<dyn RemoteReadyCallback>,
     auth_sess: HttpAuthClientSession,
 }
 
@@ -104,7 +104,7 @@ impl EventHandler for ClientSocketEstablishedHandler {
 struct ClientRemoteResponseHandler {
     token: Token,
     conn: TcpStream,
-    readycall: Box<dyn ProxyClientReadyCall>,
+    readycall: Box<dyn RemoteReadyCallback>,
 }
 
 impl EventHandler for ClientRemoteResponseHandler {

@@ -7,7 +7,7 @@
 upload.wikimedia.org +to 208.80.153.240
 *.wiki*.org +to wikipedia.org
 
-github.com +dns secure
+#github.com +dns secure
 gist.github.com +to github.com
 
 ..steamcommunity.com +dns secure
@@ -27,3 +27,7 @@ gist.github.com +to github.com
 ..apk4fun.com +dns secure
 ..apkmirror.com +dns secure
 ..uptodown.com +dns secure
+
+..duckduckgo.com +dns secure
+
+..huggingface.co +dns secure

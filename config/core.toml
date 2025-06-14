@@ -1,5 +1,5 @@
 [env]
-openssl_path = "D:\\msys64\\usr\\bin\\openssl.exe"
+openssl_path = "E:\\Program Files\\Git\\usr\\bin\\openssl.exe"
 
 
 [inbound.normal]
@@ -32,4 +32,4 @@ load-local-host-file = true
 
 [dns-server]
 normal = "udp://223.5.5.5"
-secure = "tls://101.101.101.101"
+secure = "tls://1.1.1.1"

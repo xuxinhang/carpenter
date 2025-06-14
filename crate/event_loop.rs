@@ -21,11 +21,12 @@ impl EventTokenPool {
 pub trait EventHandler {
     fn register(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
+    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
 }
 
 
-pub struct EventRegistryIntf(usize, Token, Interest);
+pub struct EventRegistryIntf(usize, Token, Interest, usize);
 
 impl EventRegistryIntf {
     pub fn get_event_loop(&mut self) -> &mut EventLoop {
@@ -40,19 +41,20 @@ impl EventRegistryIntf {
         token: Token,
         interests: Interest,
     ) -> io::Result<()> {
-        let el = self.get_event_loop();
-        let sum_of_interests = match el.handlers.get(&token) {
-            None => {
-                el.handlers.insert(token, Vec::new());
-                interests
-            }
-            Some(lst) => {
-                lst.iter().fold(interests, |s, x| s | x.0)
-            }
-        };
-        el.poll.registry().register(source, token, sum_of_interests)?;
-        self.1 = token;
+        // let sum_of_interests = match el.handlers.get(&token) {
+        //     None => {
+        //         el.handlers.insert(token, Vec::new());
+        //         interests
+        //     }
+        //     Some(lst) => {
+        //         lst.iter().fold(interests, |s, x| s | x.0)
+        //     }
+        // };
+        let handler_id = self.3;
+        self.get_event_loop().poll.registry().register(source, token, interests)?;
+        self.1 = token.clone();
         self.2 = interests;
+        self.get_event_loop().listens.push((token, interests, handler_id));
         Ok(())
     }
 
@@ -62,19 +64,20 @@ impl EventRegistryIntf {
         token: Token,
         interests: Interest,
     ) -> io::Result<()> {
-        let el = self.get_event_loop();
-        let sum_of_interests = match el.handlers.get(&token) {
-            None => {
-                el.handlers.insert(token, Vec::new());
-                interests
-            }
-            Some(lst) => {
-                lst.iter().fold(interests, |s, x| s | x.0)
-            }
-        };
-        el.poll.registry().reregister(source, token, sum_of_interests)?;
+        // let sum_of_interests = match el.handlers.get(&token) {
+        //     None => {
+        //         el.handlers.insert(token, Vec::new());
+        //         interests
+        //     }
+        //     Some(lst) => {
+        //         lst.iter().fold(interests, |s, x| s | x.0)
+        //     }
+        // };
+        let handler_id = self.3;
+        self.get_event_loop().poll.registry().reregister(source, token, interests)?;
         self.1 = token;
         self.2 = interests;
+        self.get_event_loop().listens.push((token, interests, handler_id));
         Ok(())
     }
 }
@@ -83,8 +86,10 @@ impl EventRegistryIntf {
 pub struct EventLoop {
     poll: Poll,
     events: Events,
-    handlers: HashMap<Token, Vec<(Interest, Box<dyn EventHandler>)>>,
     registry_intf: EventRegistryIntf,
+    handler_id_count: usize,
+    handlers: HashMap<usize, Box<dyn EventHandler>>,
+    listens: Vec<(Token, Interest, usize)>,
     pub token: EventTokenPool,
 }
 
@@ -94,28 +99,44 @@ impl EventLoop {
             poll: Poll::new()?,
             events: Events::with_capacity(event_capacity),
             handlers: HashMap::new(),
-            registry_intf: EventRegistryIntf(0, Token(0), Interest::READABLE),
+            registry_intf: EventRegistryIntf(0, Token(0), Interest::READABLE, 0),
             token: EventTokenPool { next_token: Token(256) },
+            listens: Vec::new(),
+            handler_id_count: 100,
         };
         this.registry_intf.0 = (&mut this.registry_intf as *mut _ as usize) - (&mut this as *mut _ as usize);
         Ok(this)
     }
 
     pub fn register(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
+        self.registry_intf.3 = self.handler_id_count;
         hdlr.as_mut().register(&mut self.registry_intf)?;
         // self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
-        let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
-        hdlr_vec.clear();
-        hdlr_vec.push((self.registry_intf.2, hdlr));
+        // let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
+        // hdlr_vec.clear();
+        // hdlr_vec.push((self.registry_intf.2, hdlr));
+        self.handlers.insert(self.registry_intf.3, hdlr);
+        self.handler_id_count += 1;
         Ok(())
     }
 
     pub fn reregister(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
+        self.registry_intf.3 = self.handler_id_count;
         hdlr.as_mut().reregister(&mut self.registry_intf)?;
         // self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
-        let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
-        hdlr_vec.clear();
-        hdlr_vec.push((self.registry_intf.2, hdlr));
+        // let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
+        // hdlr_vec.clear();
+        // hdlr_vec.push((self.registry_intf.2, hdlr));
+        self.handlers.insert(self.registry_intf.3, hdlr);
+        self.handler_id_count += 1;
+        Ok(())
+    }
+
+    pub fn collect(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
+        self.registry_intf.3 = self.handler_id_count;
+        hdlr.as_mut().collect(&mut self.registry_intf)?;
+        self.handlers.insert(self.registry_intf.3, hdlr);
+        self.handler_id_count += 1;
         Ok(())
     }
 
@@ -139,29 +160,52 @@ impl EventLoop {
             }
 
             for (evt, tok) in pending_events {
-                if self.handlers.get(&tok).is_none() {
-                    continue;
-                }
-                let mut pending_hdlr_idx = Vec::new();
-                let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
-                for (idx, (inte, _)) in hdlr_lst.iter().enumerate() {
-                    if interest_and_event(inte, &evt).is_some() {
-                        pending_hdlr_idx.push(idx);
+                /* // old handler mode
+                if self.handlers.get(&tok).is_some() {
+                    let mut pending_hdlr_idx = Vec::new();
+                    let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
+                    for (idx, (inte, _)) in hdlr_lst.iter().enumerate() {
+                        if interest_and_event(inte, &evt).is_some() {
+                            pending_hdlr_idx.push(idx);
+                        }
+                    }
+                    pending_hdlr_idx.reverse();
+
+                    let mut pending_hdlr_box = Vec::from_iter(pending_hdlr_idx.iter().map(|x| {
+                        let (_, hdlr) = hdlr_lst.remove(*x);
+                        hdlr
+                    }));
+                    while !pending_hdlr_box.is_empty() {
+                        pending_hdlr_box.pop().unwrap().handle(&evt, self);
+                    }
+                    // remove useless items
+                    let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
+                    if hdlr_lst.is_empty() {
+                        self.handlers.remove(&tok);
                     }
                 }
-                pending_hdlr_idx.reverse();
+                // */
 
-                let mut pending_hdlr_box = Vec::from_iter(pending_hdlr_idx.iter().map(|x| {
-                    let (_, hdlr) = hdlr_lst.remove(*x);
-                    hdlr
-                }));
-                while !pending_hdlr_box.is_empty() {
-                    pending_hdlr_box.pop().unwrap().handle(&evt, self);
+                // new
+                let mut triggered_listens_idx = Vec::new();
+                for (idx, (l_token, l_interest, l_handler_id)) in self.listens.iter().enumerate() {
+                    if tok == *l_token && interest_and_event(l_interest, &evt).is_some() {
+                        triggered_listens_idx.push(idx);
+                    }
                 }
-                // remove useless items
-                let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
-                if hdlr_lst.is_empty() {
-                    self.handlers.remove(&tok);
+                triggered_listens_idx.reverse();
+
+                let mut triggered_handlers = Vec::new();
+                let mut triggered_listens_lite = Vec::new();
+                for listens_idx in triggered_listens_idx {
+                    let (m_token, m_interest, m_handler_id) = self.listens.remove(listens_idx);
+                    if let Some(handler) = self.handlers.remove(&m_handler_id) {
+                        triggered_handlers.push((handler, m_handler_id));
+                        triggered_listens_lite.push((m_token, m_interest));
+                    }
+                }
+                for (handler, _handler_id) in triggered_handlers {
+                    handler.handle(&evt, self);
                 }
             }
         }

@@ -11,7 +11,7 @@ use crate::certmgr::certstorage::{get_cert_data_by_hostname};
 use crate::transformer::{create_transformer_unit, TransformerUnit, TransformerUnitError, TransformerUnitResult};
 use super::ProxyServer;
 use super::prepare::prepare_proxy_client_to_remote_host;
-use crate::proxy_client::{ProxyClientReadyCall};
+use crate::proxy_client::{RemoteReadyCallback};
 use crate::common::HostName;
 use super::tunnel::{TunnelMeta, EstablishedTunnel};
 use super::http_proxy_utils::parse_http_proxy_message;
@@ -259,7 +259,7 @@ struct ProxyServerResponseHandler {
     client_transformer: Option<Box<dyn TransformerUnit>>,
 }
 
-impl ProxyClientReadyCall for ProxyServerResponseHandler {
+impl RemoteReadyCallback for ProxyServerResponseHandler {
     fn proxy_client_ready(
         mut self: Box<Self>,
         event_loop: &mut EventLoop,

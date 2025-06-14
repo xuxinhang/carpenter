@@ -8,7 +8,7 @@ use mio::net::{TcpListener, TcpStream};
 use std::net::{SocketAddr, Shutdown};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{create_transformer_unit, TransformerUnit};
-use crate::proxy_client::ProxyClientReadyCall;
+use crate::proxy_client::RemoteReadyCallback;
 use super::tunnel::{TunnelMeta, EstablishedTunnel};
 use super::ProxyServer;
 use crate::utils::http_message::parse_http_header;
@@ -257,7 +257,7 @@ struct ClientConnectCallback {
     transformer: Box<dyn TransformerUnit>,
 }
 
-impl ProxyClientReadyCall for ClientConnectCallback {
+impl RemoteReadyCallback for ClientConnectCallback {
     fn proxy_client_ready(
         self: Box<Self>,
         event_loop: &mut EventLoop,

@@ -17,11 +17,11 @@ pub trait ProxyClient {
         token: Token,
         event_loop: &mut EventLoop,
         tunnel_addr: HostAddr,
-        readycall: Box<dyn ProxyClientReadyCall>,
+        readycall: Box<dyn RemoteReadyCallback>,
     ) -> io::Result<()>;
 }
 
-pub trait ProxyClientReadyCall {
+pub trait RemoteReadyCallback {
     fn proxy_client_ready(
         self: Box<Self>,
         event_loop: &mut EventLoop,

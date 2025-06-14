@@ -3,14 +3,14 @@
 use std::net::{SocketAddr, IpAddr};
 use crate::event_loop::EventLoop;
 use crate::common::HostAddr;
-use crate::proxy_client::{get_proxy_client, ProxyClientReadyCall, ProxyClient};
+use crate::proxy_client::{get_proxy_client, RemoteReadyCallback, ProxyClient};
 use crate::dnsresolver::{DnsQueier, DnsResolveCallback};
 
 
 pub fn prepare_proxy_client_to_remote_host(
     host: HostAddr,
     event_loop: &mut EventLoop,
-    callback: Box<dyn ProxyClientReadyCall>,
+    callback: Box<dyn RemoteReadyCallback>,
 ) {
     let (client, is_dns_resolve_required) = get_proxy_client(&host).unwrap();
 
@@ -35,7 +35,7 @@ pub fn prepare_proxy_client_to_remote_host(
 struct RemoteHostQueryDoneCallback {
     remote_host: HostAddr,
     proxy_client: Box<dyn ProxyClient>,
-    proxy_client_callback: Box<dyn ProxyClientReadyCall>,
+    proxy_client_callback: Box<dyn RemoteReadyCallback>,
 }
 
 impl DnsResolveCallback for RemoteHostQueryDoneCallback {

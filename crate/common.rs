@@ -92,6 +92,16 @@ pub enum HostName {
     DomainName(String),
 }
 
+#[derive(Clone)]
+pub struct HostAddress(pub Hostname, pub u16);
+
+#[derive(Clone)]
+pub enum Hostname {
+    IpAddress(std::net::IpAddr),
+    DnsName(domain::base::Dname<Vec<u8>>),
+}
+
+
 impl HostName {
     fn _is_domain_name(&self) -> bool {
         match self {

@@ -12,18 +12,21 @@ pub mod utils;
 pub mod certmgr;
 pub mod authorization;
 pub mod credential;
-
+pub mod bridge;
+pub mod stations;
+pub mod listener;
 
 use std::rc::Rc;
 use crate::event_loop::EventLoop;
 use crate::configuration::InboundServerProtocol;
+use crate::listener::launch_server_listener;
 use crate::server::ProxyServer;
 
 
 fn main() {
     print!("Hello, mio!\n");
 
-    // intialize global static variables
+    // initialize global static variables
     global::init_global_stuff();
 
     // load config from file
@@ -120,7 +123,7 @@ fn start_proxy_server(el: &mut EventLoop) -> usize {
     for (key, cfg) in inbound_server_config.iter() {
         let listen_addr = cfg.addr;
         match cfg.protocol {
-            InboundServerProtocol::Http => {
+            /* InboundServerProtocol::Http => {
                 let s = server::http_server::HttpProxyServer::new(listen_addr);
                 if let Err(e) = s {
                     wd_log::log_error_ln!("Fail to create proxy server \"{}\": {:?}", key, e);
@@ -132,6 +135,12 @@ fn start_proxy_server(el: &mut EventLoop) -> usize {
                 } else {
                     wd_log::log_info_ln!("Proxy server \"{}\" running on {}", key, listen_addr);
                     listen_count += 1;
+                }
+            } */
+            InboundServerProtocol::Http => {
+                if let Err(e) = launch_server_listener(InboundServerProtocol::Http, listen_addr, el) {
+                    wd_log::log_error_ln!("Fail to launch generic incominglistener \"{}\": {:?}", key, e);
+                    continue;
                 }
             }
             InboundServerProtocol::HttpOverTls => {

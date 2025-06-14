@@ -8,3 +8,4 @@
 *.pem
 *.crt
 *.csr
+/.idea

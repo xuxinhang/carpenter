@@ -29,6 +29,9 @@ github.com:443  +sni _
 ..apkmirror.com:443 +sni _
 ..uptodown.com:443 +sni _
 
+..duckduckgo.com +sni _
+
+..huggingface.co +sni _
 
 
 

@@ -5,7 +5,7 @@ use mio::{Token, Interest};
 use mio::net::{TcpStream};
 use mio::event::{Event};
 use rustls::ClientConnection;
-use super::{ProxyClient, ProxyClientReadyCall};
+use super::{ProxyClient, RemoteReadyCallback};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::transformer::{TransformerUnit, TransformerUnitResult, TransformerUnitError};
 use crate::common::{HostAddr, HostName};
@@ -41,7 +41,7 @@ impl ProxyClient for ProxyClientHttpOverTls {
         token: Token,
         event_loop: &mut EventLoop,
         tunnel_addr: HostAddr,
-        readycall: Box<dyn ProxyClientReadyCall>,
+        readycall: Box<dyn RemoteReadyCallback>,
     ) -> io::Result<()> {
         let conn = TcpStream::connect(self.server_addr)?;
 
@@ -114,7 +114,7 @@ struct ClientConnectedHandler {
     wbuf: Vec<u8>,
     rbuf: Vec<u8>,
     _tunnel_addr: HostAddr,
-    readycall: Box<dyn ProxyClientReadyCall>,
+    readycall: Box<dyn RemoteReadyCallback>,
 }
 
 

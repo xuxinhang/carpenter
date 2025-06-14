@@ -2,7 +2,7 @@ use std::net::{IpAddr};
 use std::str::FromStr;
 use crate::event_loop::{EventLoop};
 use crate::configuration::{QuerierAction, DnsServerProtocol};
-use crate::common::HostName;
+use crate::common::{HostName, Hostname};
 
 
 mod utils;
@@ -44,6 +44,10 @@ pub struct DnsQueier {
 impl DnsQueier {
     pub fn new(hostname: HostName) -> Self {
         Self { hostname }
+    }
+    
+    pub fn new2(hostname: &domain::base::Dname<Vec<u8>>) -> Self {
+        Self::new(HostName::DomainName(hostname.to_string()))
     }
 
     pub fn query_cache(&self, hostname: &str) -> Option<IpAddr> {

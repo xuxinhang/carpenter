@@ -253,7 +253,7 @@ pub struct OutboundClient {
     pub hostname: Option<HostName>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InboundServerProtocol {
     Http,
     HttpOverTls,
