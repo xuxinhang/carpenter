@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::io;
+use std::{io, iter, mem};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -183,17 +183,17 @@ impl BridgeStation for BridgeTCPStreamLocalTerminal {
     fn remote_write(&mut self, buf: &[u8]) -> BridgeResult {
         let res = match self.stream.write(buf) {
             Ok(0) => {
-                println!("BridgeTCPStreamLocalTerminal -> remote_write: Ok(0)");
+                wd_log::log_debug_ln!("BridgeTCPStreamLocalTerminal -> remote_write: Ok(0)");
                 Ok(BridgeStationTransferRecord::End)
             },
             Ok(n) => {
                 self.stream.flush().unwrap();
-                println!("BridgeTCPStreamLocalTerminal -> remote_write: Ok(n={:?})", n);
+                wd_log::log_debug_ln!("BridgeTCPStreamLocalTerminal -> remote_write: Ok(n={:?})", n);
                 Ok(BridgeStationTransferRecord::Some(n))
             },
             Err(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => {
-                    println!("BridgeTCPStreamLocalTerminal -> remote_write: WouldBlock");
+                    wd_log::log_debug_ln!("BridgeTCPStreamLocalTerminal -> remote_write: WouldBlock");
                     Ok(BridgeStationTransferRecord::Wait)
                 }
                 _ => Err(BridgeError::IO(e)),
@@ -205,16 +205,16 @@ impl BridgeStation for BridgeTCPStreamLocalTerminal {
     fn remote_read(&mut self, buf: &mut [u8]) -> BridgeResult {
         let res = match self.stream.read(buf) {
             Ok(0) => {
-                println!("BridgeTCPStreamLocalTerminal -> remote_read: Ok(0)");
+                wd_log::log_debug_ln!("BridgeTCPStreamLocalTerminal -> remote_read: Ok(0)");
                 Ok(BridgeStationTransferRecord::End)
             },
             Ok(n) => {
-                println!("BridgeTCPStreamLocalTerminal -> remote_read: Ok(n={})", n);
+                wd_log::log_debug_ln!("BridgeTCPStreamLocalTerminal -> remote_read: Ok(n={})", n);
                 Ok(BridgeStationTransferRecord::Some(n))
             },
             Err(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => {
-                    println!("BridgeTCPStreamLocalTerminal -> remote_read: WouldBlock");
+                    wd_log::log_debug_ln!("BridgeTCPStreamLocalTerminal -> remote_read: WouldBlock");
                     Ok(BridgeStationTransferRecord::Wait)
                 }
                 _ => Err(BridgeError::IO(e)),
@@ -244,16 +244,16 @@ impl BridgeStation for BridgeTCPStreamRemoteTerminal {
     fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
         let res = match self.stream.write(buf) {
             Ok(0) => {
-                println!("BridgeTCPStreamRemoteTerminal -> local_write: Ok(0)");
+                wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_write: Ok(0)");
                 Ok(BridgeStationTransferRecord::End)
             },
             Ok(n) => {
-                println!("BridgeTCPStreamRemoteTerminal -> local_write: Ok(n=)");
+                wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_write: Ok(n=)");
                 Ok(BridgeStationTransferRecord::Some(n))
             },
             Err(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => {
-                    println!("BridgeTCPStreamRemoteTerminal -> local_write: WouldBlock");
+                    wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_write: WouldBlock");
                     Ok(BridgeStationTransferRecord::Wait)
                 }
                 _ => Err(BridgeError::IO(e)),
@@ -265,16 +265,16 @@ impl BridgeStation for BridgeTCPStreamRemoteTerminal {
     fn local_read(&mut self, buf: &mut [u8]) -> BridgeResult {
         let res = match self.stream.read(buf) {
             Ok(0) => {
-                println!("BridgeTCPStreamRemoteTerminal -> local_read: Ok(0)");
+                wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_read: Ok(0)");
                 Ok(BridgeStationTransferRecord::End)
             },
             Ok(n) => {
-                println!("BridgeTCPStreamRemoteTerminal -> local_read: Ok(n={}) ", n);
+                wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_read: Ok(n={}) ", n);
                 Ok(BridgeStationTransferRecord::Some(n))
             },
             Err(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => {
-                    println!("BridgeTCPStreamRemoteTerminal -> local_read: WouldBlock");
+                    wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_read: WouldBlock");
                     Ok(BridgeStationTransferRecord::Wait)
                 }
                 _ => Err(BridgeError::IO(e)),
@@ -293,7 +293,6 @@ impl BridgeStation for BridgeTCPStreamRemoteTerminal {
 }
 
 
-
 pub struct BridgeChain {
     local_terminal: BridgeTCPStreamLocalTerminal,
     local_terminal_read_snapshot: BridgeStationTransferRecord,
@@ -302,6 +301,7 @@ pub struct BridgeChain {
     remote_terminal_read_snapshot: BridgeStationTransferRecord,
     remote_terminal_write_snapshot: BridgeStationTransferRecord,
     stations: Vec<(usize, Box<dyn BridgeStation>)>,
+    station_id_generator: Box<dyn Iterator<Item=usize>>,
     buffers: Vec<(BridgeBuffer, BridgeBuffer)>, // 0: to local, 1: to remote
     local_terminal_next_interest: Option<Interest>,
     remote_terminal_next_interest: Option<Interest>,
@@ -315,43 +315,60 @@ impl BridgeChain {
         mut local_terminal: BridgeTCPStreamLocalTerminal,
         mut initial_stations: Vec<Box<dyn BridgeStation>>,
     ) -> Self {
-        let buffer_count = initial_stations.len() + 1;
-        let mut init_buffers = Vec::with_capacity(buffer_count);
-        for _ in 0..buffer_count {
-            init_buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
-        }
-        let mut init_stations : Vec<(usize, Box<dyn BridgeStation>)> =
-            initial_stations.into_iter().enumerate()
-                .map(|(i, s)| (i+ BRIDGE_STATION_GENERAL_STATION_ID_BASE, s))
-                .collect();
+        let station_count = initial_stations.len();
+        let buffer_count = station_count + 1;
 
         let upward_queue = BridgeStationMessageDequeAccessor::create(0);
         let downward_queue = BridgeStationMessageDequeAccessor::create(0);
+
         local_terminal.set_message_queue(
             downward_queue.clone_with_new_id(BRIDGE_STATION_LOCAL_TERMINAL_STATION_ID),
             upward_queue.clone_with_new_id(BRIDGE_STATION_LOCAL_TERMINAL_STATION_ID),
         );
-        init_stations.iter_mut().for_each(|(si, sb)|
-            sb.set_message_queue(
-                downward_queue.clone_with_new_id(*si),
-                upward_queue.clone_with_new_id(*si),
-            ));
 
-        Self {
+        // let mut init_buffers = Vec::with_capacity(buffer_count);
+        // for _ in 0..buffer_count {
+        //     init_buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
+        // }
+        // let mut init_stations : Vec<(usize, Box<dyn BridgeStation>)> =
+        //     initial_stations.into_iter().enumerate()
+        //         .map(|(i, s)| (i+ BRIDGE_STATION_GENERAL_STATION_ID_BASE, s))
+        //         .collect();
+        //
+        // init_stations.iter_mut().for_each(|(si, sb)|
+        //     sb.set_message_queue(
+        //         downward_queue.clone_with_new_id(*si),
+        //         upward_queue.clone_with_new_id(*si),
+        //     ));
+        //
+        let zero_stations = Vec::with_capacity(station_count);
+        let mut zero_buffers = Vec::with_capacity(buffer_count);
+        zero_buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
+
+        let terminal_initial_snapshot = BridgeStationTransferRecord::Wait;
+
+        let mut bridge = Self {
             local_terminal,
-            local_terminal_read_snapshot: BridgeStationTransferRecord::Wait,
-            local_terminal_write_snapshot: BridgeStationTransferRecord::Wait,
+            local_terminal_read_snapshot: terminal_initial_snapshot,
+            local_terminal_write_snapshot: terminal_initial_snapshot,
             remote_terminal: None,
-            remote_terminal_read_snapshot: BridgeStationTransferRecord::Wait,
-            remote_terminal_write_snapshot: BridgeStationTransferRecord::Wait,
-            stations: init_stations,
-            buffers: init_buffers,
-            local_terminal_next_interest: None,
-            remote_terminal_next_interest: None,
+            remote_terminal_read_snapshot: terminal_initial_snapshot,
+            remote_terminal_write_snapshot: terminal_initial_snapshot,
+            station_id_generator: Box::new(iter::successors(Some(300), |&n| Some(n + 1))),
+            stations: zero_stations,
+            buffers: zero_buffers,
             public_upward_message_queue: upward_queue,
             public_downward_message_queue: downward_queue,
+            local_terminal_next_interest: None,
+            remote_terminal_next_interest: None,
             remote_link_guide: None,
-        }
+        };
+
+        initial_stations.into_iter().enumerate().for_each(|(_, sb)| {
+            bridge.append_station(sb);
+        });
+
+        bridge
     }
 
     fn assign_remote_terminal(
@@ -532,7 +549,18 @@ impl BridgeChain {
         }
         have_to_skip_loop
     }
-    
+
+    fn append_station(&mut self, mut new_station: Box<dyn BridgeStation>) {
+        let new_station_id: usize = self.station_id_generator.next().unwrap();
+
+        new_station.set_message_queue(
+            self.public_downward_message_queue.clone_with_new_id(new_station_id),
+            self.public_upward_message_queue.clone_with_new_id(new_station_id),
+        );
+        self.stations.push((new_station_id, new_station));
+        self.buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
+    }
+
     fn remove_station(&mut self, station_id: usize) {
         let station_index = self.stations.iter()
             .position(|(si, sb)| *si == station_id).unwrap();
@@ -557,7 +585,7 @@ impl BridgeChain {
         loop {
             let res = self.flush_once();
             if let Err(e) = res {
-                wd_log::log_error_ln!("BridgeChain.do_loop // {:?}", e);
+                wd_log::log_warn_ln!("BridgeChain.do_loop // {:?}", e);
                 return;
             }
             let (flush_size, flush_incomplete) = res.unwrap();
@@ -591,7 +619,7 @@ impl EventHandler for BridgeChain {
     fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         self.collect(registry)
     }
-    
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         self.local_terminal_next_interest =
             match (self.local_terminal_read_snapshot, self.local_terminal_write_snapshot)  {
@@ -643,6 +671,7 @@ impl EventHandler for BridgeChain {
                 Hostname::DnsName(ref domain) => Hostname::DnsName(domain.clone()),
                 // TODO: direct ip access :: return ip.clone()
             };
+
             match &direct_hostname {
                 Hostname::IpAddress(addr) => {
                     let fake_handler = DnsQueryOnLoadHandler { hanged_bridge: self };
@@ -717,12 +746,21 @@ impl EventHandler for RemoteTcpStreamOnConnectedHandler {
 
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
         let mut hanged_bridge = self.hanged_bridge;
+        
         let remote_terminal = BridgeTCPStreamRemoteTerminal {
             stream: self.remote_stream,
             listener_token: self.remote_stream_token,
             listener_registered: 1, // shouldn't be 0, because we just registered it.
         };
         hanged_bridge.assign_remote_terminal(remote_terminal, true);
+
+        let mut guide = hanged_bridge.remote_link_guide.take().unwrap();
+        let extended_stations = mem::replace(&mut guide.stations, vec![]);
+        extended_stations.into_iter().for_each(|sb| {
+            hanged_bridge.append_station(sb);
+        });
+        hanged_bridge.remote_link_guide = Some(guide);
+        
         hanged_bridge.handle(event, event_loop);
         // event_loop.reregister(hanged_bridge).unwrap();
         // TODO
@@ -787,7 +825,7 @@ impl BridgeBuffer {
         }
 
         if self.wants_read() == 0 {
-            println!("BridgeBuffer -> read_from -> wants_read() == 0");
+            wd_log::log_debug_ln!("BridgeBuffer -> read_from -> wants_read() == 0");
             return Ok(BridgeStationTransferRecord::Some(0));
         }
 

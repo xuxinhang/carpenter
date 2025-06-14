@@ -101,6 +101,39 @@ pub enum Hostname {
     DnsName(domain::base::Dname<Vec<u8>>),
 }
 
+impl ToString for Hostname {
+    fn to_string(&self) -> String {
+        match self {
+            Self::IpAddress(x) => x.to_string(),
+            Self::DnsName(x) => x.to_string(),
+        }
+    }
+}
+
+impl FromStr for Hostname {
+    type Err = HostParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(x) = s.parse() {
+            return Ok(Self::IpAddress(x));
+        }
+        if let Ok(x) = domain::base::Dname::from_str(s) {
+            return Ok(Self::DnsName(x));
+        }
+        Err(HostParseError())
+    }
+}
+
+pub fn convert_HostAddress_to_HostAddr(h: &HostAddress) -> HostAddr {
+    HostAddr(convert_Hostname_to_HostName(&h.0), h.1)
+}
+
+pub fn convert_Hostname_to_HostName(h: &Hostname) -> HostName {
+    match h {
+        Hostname::IpAddress(ip) => HostName::IpAddress(ip.clone()),
+        Hostname::DnsName(dname) => HostName::DomainName(dname.to_string()),
+    }
+}
 
 impl HostName {
     fn _is_domain_name(&self) -> bool {
