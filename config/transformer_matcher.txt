@@ -11,6 +11,7 @@ wiki*.org:443 +sni _
 gist.github.com:443  +sni _
 github.com:443  +sni _
 ..githubusercontent.com:443 +sni _
+..githubassets.com:443 +sni _
 
 ..steampowered.com:443 +sni _
 ..steamcommunity.com:443 +sni _

@@ -199,7 +199,7 @@ fn parse_querier_matcher(tree: &mut HostMatchTree<QuerierAction>, reader: impl B
 /**
  * Outbound matcher config
  */
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum OutboundAction {
     Direct,
     Server(String),

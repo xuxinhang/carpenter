@@ -92,10 +92,16 @@ pub enum HostName {
     DomainName(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct HostAddress(pub Hostname, pub u16);
 
-#[derive(Clone)]
+impl From<SocketAddr> for HostAddress {
+    fn from(socket: SocketAddr) -> Self {
+        Self(Hostname::IpAddress(socket.ip()), socket.port())
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Hostname {
     IpAddress(std::net::IpAddr),
     DnsName(domain::base::Dname<Vec<u8>>),

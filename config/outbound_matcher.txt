@@ -3,3 +3,9 @@
 *.google.com:0 +server fanq
 t.me:0 +server fanq
 *.chrome.com:0 +server fanq
+duckduckgo.com:443 +server tor
+..x.com:0 +server tor
+..twitter.com:0 +server tor
+..reddit.com:0 +server tor
+..redditmedia.com:0 +server tor
+..redd.it:0 +server tor

@@ -666,7 +666,7 @@ impl EventHandler for BridgeChain {
         self.do_loop();
 
         if self.remote_link_guide.is_some() && self.remote_terminal.is_none() {
-            let direct_hostname = match self.remote_link_guide.as_ref().unwrap().stream_target.0 {
+            let direct_hostname = match self.remote_link_guide.as_ref().unwrap().stream_address.0 {
                 Hostname::IpAddress(ref addr) => Hostname::IpAddress(addr.clone()),
                 Hostname::DnsName(ref domain) => Hostname::DnsName(domain.clone()),
                 // TODO: direct ip access :: return ip.clone()
@@ -717,7 +717,7 @@ impl DnsResolveCallback for DnsQueryOnLoadHandler {
 
         let stream = TcpStream::connect(SocketAddr::new(
             ip.unwrap(),
-            (&hanged_bridge).remote_link_guide.as_ref().unwrap().stream_target.1)
+            (&hanged_bridge).remote_link_guide.as_ref().unwrap().stream_address.1)
         );
         if stream.is_err() {
             report_failure!(false);

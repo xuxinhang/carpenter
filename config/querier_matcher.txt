@@ -7,8 +7,9 @@
 upload.wikimedia.org +to 208.80.153.240
 *.wiki*.org +to wikipedia.org
 
-#github.com +dns secure
+github.com +dns secure
 gist.github.com +to github.com
+..githubassets.com:443 +dns secure
 
 ..steamcommunity.com +dns secure
 
