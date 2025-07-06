@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use std::io::{BufRead, BufReader, Read};
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use crate::authorization::verifiers::SimpleAuthenticationVerifier;
@@ -254,13 +254,13 @@ pub struct OutboundClient {
     pub hostname: Option<HostName>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InboundServerProtocol {
     Http,
     HttpOverTls,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InboundServer {
     pub protocol: InboundServerProtocol,
     pub addr: SocketAddr,

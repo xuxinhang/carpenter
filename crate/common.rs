@@ -3,7 +3,7 @@ use std::fs;
 use std::str::FromStr;
 use std::net::{SocketAddr, IpAddr};
 use std::convert::{TryInto, From};
-
+use domain::base::Dname;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostAddr(pub HostName, pub u16);
@@ -148,6 +148,13 @@ pub fn convert_Hostname_to_HostName(h: &Hostname) -> HostName {
     match h {
         Hostname::IpAddress(ip) => HostName::IpAddress(ip.clone()),
         Hostname::DnsName(dname) => HostName::DomainName(dname.to_string()),
+    }
+}
+
+pub fn convert_HostName_to_Hostname(h: &HostName) -> Hostname {
+    match h {
+        HostName::IpAddress(ip) => Hostname::IpAddress(ip.clone()),
+        HostName::DomainName(dname) => Hostname::DnsName(Dname::from_str(dname).unwrap()),
     }
 }
 

@@ -23,9 +23,7 @@ pub mod helper;
 
 use authorization::verifiers::{load_simple_credentials_from_file, AuthenticationVerifier, FreeAuthenticationVerifier};
 use event_loop::EventLoop;
-use configuration::{InboundServerProtocol};
 use listener::launch_server_listener;
-use server::ProxyServer;
 
 
 const _WELCOME_ART_1: &str = r"
@@ -175,6 +173,15 @@ fn register_servers(el: &mut EventLoop, authentication_manager: Rc<RefCell<Box<d
 
     for (key, cfg) in inbound_server_config.iter() {
         let listen_addr = cfg.addr;
+
+        if let Err(e) = launch_server_listener(el, cfg, listen_addr, authentication_manager.clone()) {
+            wd_log::log_error_ln!("Fail to launch generic incoming listener \"{}\": {:?}", key, e);
+            continue;
+        }
+
+        listen_count += 1;
+        
+        /*
         match cfg.protocol {
             InboundServerProtocol::Http => {
                 if let Err(e) = launch_server_listener(
@@ -200,6 +207,7 @@ fn register_servers(el: &mut EventLoop, authentication_manager: Rc<RefCell<Box<d
                 }
             }
         }
+        */
     }
 
     listen_count

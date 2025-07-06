@@ -7,13 +7,15 @@ use mio::net::TcpListener;
 use mio::{Interest, Token};
 use crate::authorization::verifiers::{AuthenticationVerifier};
 use crate::bridge::{BridgeChain, BridgeStation, BridgeTCPStreamLocalTerminal};
-use crate::configuration::{InboundServerProtocol};
+use crate::common::{convert_HostName_to_Hostname};
+use crate::configuration::{InboundServer, InboundServerProtocol};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::stations::server::http_tunnel::HTTPTunnelProtocolStation;
+use crate::stations::server::tls_server::TlsUniversalServerStation;
 
 pub fn launch_server_listener(
     event_loop: &mut EventLoop,
-    protocol: InboundServerProtocol,
+    server_config: &InboundServer,
     address: SocketAddr,
     base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>
 ) -> io::Result<()> {
@@ -28,7 +30,7 @@ pub fn launch_server_listener(
     let server = LocalStreamIncomingGenericServer {
         listener,
         listener_token,
-        protocol,
+        server_config: server_config.clone(),
         listener_registered: 0,
         base_authentication_manager,
     };
@@ -42,7 +44,7 @@ struct LocalStreamIncomingGenericServer {
     listener: TcpListener,
     listener_token: Token,
     listener_registered: usize,
-    protocol: InboundServerProtocol,
+    server_config: InboundServer,
     base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>,
 }
 
@@ -74,7 +76,7 @@ impl EventHandler for LocalStreamIncomingGenericServer {
         let (local_stream, _) = s.unwrap();
         local_stream.set_nodelay(true).unwrap();
         let stations = get_initial_stations_by_protocol(
-            self.protocol.clone(),
+            &self.server_config,
             self.base_authentication_manager.clone(),
         );
         let local_terminal =
@@ -88,16 +90,25 @@ impl EventHandler for LocalStreamIncomingGenericServer {
 
 
 fn get_initial_stations_by_protocol(
-    proto: InboundServerProtocol,
+    cfg: &InboundServer,
     base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>,
 ) -> Vec<Box<dyn BridgeStation>> {
-    match proto {
+    match cfg.protocol {
         InboundServerProtocol::Http => {
             let proxy_server = HTTPTunnelProtocolStation::new(
                 base_authentication_manager,
             );
             vec![Box::new(proxy_server)]
         }
-        _ => todo!(),
+        InboundServerProtocol::HttpOverTls => {
+            let server_hostname = cfg.hostname.clone().unwrap_or("localhost".parse().unwrap());
+            let server_hostname = convert_HostName_to_Hostname(&server_hostname);
+            println!("server_hostname, {:?}", &server_hostname);
+            let http_proxy_server = HTTPTunnelProtocolStation::new(
+                base_authentication_manager,
+            );
+            let tls_server = TlsUniversalServerStation::new(server_hostname);
+            vec![Box::new(tls_server), Box::new(http_proxy_server)]
+        }
     }
 }
