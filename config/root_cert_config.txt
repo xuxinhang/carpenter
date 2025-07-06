@@ -9,9 +9,9 @@ x509_extensions         = x509_extensions
 C  = CN
 ST = CQ
 L  = CQ
-O  = _Carpenter
-OU = _Carpenter
-CN = localhost
+O  = _You_are_using_Carpenter
+OU = _You_are_using_Carpenter
+CN = hello.carpenter.io
 
 [req_extensions]
 basicConstraints        = CA:TRUE

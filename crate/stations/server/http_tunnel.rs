@@ -3,10 +3,11 @@ use std::cmp::PartialEq;
 use std::io::{Read, Write};
 use std::collections::VecDeque;
 use std::rc::Rc;
-use domain::base::Dname;
+use std::str::FromStr;
+use crate::authorization::verifiers::{AuthenticationVerifier};
+use crate::authorization::protocol::httpauth::{HttpAuthenticationServerManager, HttpAuthorizationCredential};
 use crate::bridge::{BridgeError, BridgeResult, BridgeStation, BridgeStationDownwardMessage, BridgeStationMessageDequeAccessor, BridgeStationTransferRecord, BridgeStationUpwardMessage};
-use crate::common::{HostName, Hostname, HostAddress};
-
+use crate::helper::{find_http_message_header_ending, HttpRequestMessage};
 
 #[derive(PartialEq, Debug)]
 enum HTTPTunnelStatus {
@@ -22,19 +23,22 @@ pub struct HTTPTunnelProtocolStation  {
     status: HTTPTunnelStatus,
     tunnel_mode: bool,
     forward_message: VecDeque<u8>,
-    // forward_end: bool,
     response_message: VecDeque<u8>,
+    authentication_manager: HttpAuthenticationServerManager,
     station_message_upward: BridgeStationMessageDequeAccessor<BridgeStationUpwardMessage>,
     station_message_downward: BridgeStationMessageDequeAccessor<BridgeStationDownwardMessage>,
 }
 
 impl HTTPTunnelProtocolStation {
-    pub fn new() -> Self {
+    pub fn new(
+        base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>,
+    ) -> Self {
         Self {
             status: HTTPTunnelStatus::WaitingForLocalMessage,
             tunnel_mode: true,
             forward_message: VecDeque::with_capacity(8*1024),
             response_message: VecDeque::with_capacity(1024),
+            authentication_manager: HttpAuthenticationServerManager::new(base_authentication_manager),
             station_message_upward: BridgeStationMessageDequeAccessor::null(),
             station_message_downward: BridgeStationMessageDequeAccessor::null(),
         }
@@ -51,26 +55,58 @@ impl BridgeStation for HTTPTunnelProtocolStation {
             HTTPTunnelStatus::WaitingForLocalMessage => {
                 let res = self.forward_message.write(buf);
                 self.forward_message.make_contiguous();
-                let r = crate::server::http_proxy_utils::parse_http_proxy_message(
-                    self.forward_message.as_slices().0);
-                if let Err(e) = r {
-                    wd_log::log_warn_ln!("TunnelWaitingForLocalMessage # {}", e);
-                    return Err(BridgeError::Protocol("Invalid HTTP Message"));
+
+                match find_http_message_header_ending(self.forward_message.as_slices().0) {
+                    None => {}, // still waiting for the complete HTTP header.
+                    Some(header_len_expected) => {
+                        let (message, header_len) =
+                            HttpRequestMessage::from_bytes(self.forward_message.as_slices().0)
+                                .map_err(|_| BridgeError::Protocol("Invalid HTTP Message"))?;
+                        assert_eq!(header_len, header_len_expected);
+
+                        // verify Proxy-Authorization
+                        let field = message.headers.iter()
+                            .find(|h| h.0 == "Proxy-Authorization");
+                        let maybe_credential =
+                            if let Some(f) = field {
+                                let cred =
+                                    HttpAuthorizationCredential::from_str(&*String::from_utf8_lossy(f.1.as_slice()))
+                                        .map_err(|_| BridgeError::Protocol("Invalid Proxy-Authorization"))?;
+                                Some(cred)
+                            } else {
+                                None
+                            };
+                        let has_authentication_field = maybe_credential.is_some();
+                        let check_result =
+                            self.authentication_manager.check_credentials(maybe_credential);
+                        match check_result {
+                            Ok(true) => {
+                                self.tunnel_mode = message.is_tunnel_mode();
+                                if self.tunnel_mode {
+                                    self.forward_message.clear();
+                                } else {
+                                    // TODO: rename http header
+                                }
+                                let host_addr = message.get_host_addr();
+                                if host_addr.is_err() {
+                                    return Err(BridgeError::Protocol("Invalid Host Address"));
+                                }
+                                let host_addr = host_addr.unwrap();
+                                self.send_upward_message(BridgeStationUpwardMessage::ServerRequestRemoteConnect(host_addr));
+                                self.status = HTTPTunnelStatus::WaitingForRemoteConnection;
+                            }
+                            Ok(false) | Err(_) => {
+                                self.forward_message.clear();
+                                if has_authentication_field {
+                                    self.status = HTTPTunnelStatus::WaitingToResponseToLocal(404);
+                                } else {
+                                    self.status = HTTPTunnelStatus::WaitingToResponseToLocal(407);
+                                }
+                            }
+                        }
+                    }
                 }
 
-                let (_msg_header_length, host, tunnel_mode) = r.unwrap();
-                self.tunnel_mode = tunnel_mode;
-                if self.tunnel_mode == true {
-                    self.forward_message.clear(); // TODO
-                }
-
-                let host_addr = HostAddress(match host.0 {
-                    HostName::IpAddress(s) => Hostname::IpAddress(s),
-                    HostName::DomainName(s) => Hostname::DnsName(Dname::vec_from_str(&s).unwrap()),
-                }, host.1);
-
-                self.status = HTTPTunnelStatus::WaitingForRemoteConnection;
-                self.send_upward_message(BridgeStationUpwardMessage::ServerRequestRemoteConnect(host_addr));
                 Ok(BridgeStationTransferRecord::Some(res.unwrap()))
             }
             HTTPTunnelStatus::WaitingToResponseToLocal(_) => Err(BridgeError::Protocol("")),
@@ -84,19 +120,33 @@ impl BridgeStation for HTTPTunnelProtocolStation {
     fn local_read(&mut self, buf: &mut [u8]) -> BridgeResult {
         match self.status {
             HTTPTunnelStatus::WaitingToResponseToLocal(code) => {
-                // if empty, prepare response message
+                // if empty, prepare a response message
                 if self.response_message.is_empty() {
-                    let byte_message =  match code {
+                    let literal_message =  match code {
                         200 => if self.tunnel_mode {
-                            "HTTP/1.1 200 Connection Established\r\n\r\n".as_bytes()
+                            "HTTP/1.1 200 Connection Established\r\n\r\n".to_string()
                         } else {
-                            "".as_bytes()
+                            "".to_string()
                         }
-                        502 => "HTTP/1.1 502 Bad Gateway\r\n\r\n".as_bytes(),
+                        502 => "HTTP/1.1 502 Bad Gateway\r\n\r\n".to_string(),
+                        404 => "HTTP/1.1 404 Not Found\r\n\r\n".to_string(),
+                        407 => {
+                            let challenge_string: Vec<_> = self.authentication_manager.get_challenges().iter()
+                                .map(|c| c.get_http_string())
+                                .collect();
+                            format!(
+                                concat!(
+                                    "HTTP/1.1 407 Proxy Authentication Required\r\n",
+                                    "Content-Length: 0\r\n",
+                                    "Proxy-Authenticate: {}\r\n\r\n",
+                                ),
+                                challenge_string.join(", ")
+                            )
+                        },
                         _ => unreachable!(),
                     };
                     self.response_message.clear();
-                    self.response_message.extend(byte_message);
+                    self.response_message.extend(literal_message.as_bytes());
                 }
 
                 // transfer existed response message
@@ -107,7 +157,8 @@ impl BridgeStation for HTTPTunnelProtocolStation {
                 if self.response_message.is_empty() {
                     match code {
                         200 => self.status = HTTPTunnelStatus::WaitingForForwardMessageReadOut,
-                        502 => self.status = HTTPTunnelStatus::Closed,
+                        502 | 404 => self.status = HTTPTunnelStatus::Closed,
+                        407 => self.status = HTTPTunnelStatus::WaitingForLocalMessage,
                         _ => unreachable!(),
                     }
                 }

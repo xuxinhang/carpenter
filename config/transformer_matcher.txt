@@ -3,6 +3,8 @@
 sina.cn:443   +sni _
 *.sina.cn:443 +sni *
 
+..zhihu.com:443 +sni *
+
 wikipedia.org:443  +sni _
 ..wikipedia.org:443  +sni _
 wiki*.org:443 +sni _

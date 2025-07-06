@@ -1,17 +1,21 @@
+use std::cell::RefCell;
 use std::io;
 use std::net::SocketAddr;
+use std::rc::Rc;
 use mio::event::Event;
 use mio::net::TcpListener;
 use mio::{Interest, Token};
+use crate::authorization::verifiers::{AuthenticationVerifier};
 use crate::bridge::{BridgeChain, BridgeStation, BridgeTCPStreamLocalTerminal};
-use crate::configuration::InboundServerProtocol;
+use crate::configuration::{InboundServerProtocol};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::stations::server::http_tunnel::HTTPTunnelProtocolStation;
 
 pub fn launch_server_listener(
+    event_loop: &mut EventLoop,
     protocol: InboundServerProtocol,
     address: SocketAddr,
-    event_loop: &mut EventLoop,
+    base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>
 ) -> io::Result<()> {
     let res = TcpListener::bind(address);
     if res.is_err() {
@@ -22,8 +26,11 @@ pub fn launch_server_listener(
     let listener_addr = listener.local_addr();
     let listener_token = event_loop.token.get();
     let server = LocalStreamIncomingGenericServer {
-        listener, listener_token, protocol,
+        listener,
+        listener_token,
+        protocol,
         listener_registered: 0,
+        base_authentication_manager,
     };
 
     event_loop.collect(Box::new(server))?;
@@ -36,6 +43,7 @@ struct LocalStreamIncomingGenericServer {
     listener_token: Token,
     listener_registered: usize,
     protocol: InboundServerProtocol,
+    base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>,
 }
 
 impl EventHandler for LocalStreamIncomingGenericServer {
@@ -57,7 +65,7 @@ impl EventHandler for LocalStreamIncomingGenericServer {
         Ok(())
     }
 
-    fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
+    fn handle(self: Box<Self>, _event: &Event, event_loop: &mut EventLoop) {
         let s = self.listener.accept();
         if let Err(e) = s {
             wd_log::log_warn_ln!("LocalStreamIncomingGenericServer # Fail to accept the incoming connection. ({:?})", e);
@@ -65,7 +73,10 @@ impl EventHandler for LocalStreamIncomingGenericServer {
         }
         let (local_stream, _) = s.unwrap();
         local_stream.set_nodelay(true).unwrap();
-        let stations = get_initial_stations_by_protocol(self.protocol.clone());
+        let stations = get_initial_stations_by_protocol(
+            self.protocol.clone(),
+            self.base_authentication_manager.clone(),
+        );
         let local_terminal =
             BridgeTCPStreamLocalTerminal::from_stream(local_stream, event_loop.token.get());
         let bridge = BridgeChain::from_existed(local_terminal, stations);
@@ -76,10 +87,15 @@ impl EventHandler for LocalStreamIncomingGenericServer {
 }
 
 
-fn get_initial_stations_by_protocol(proto: InboundServerProtocol) -> Vec<Box<dyn BridgeStation>>{
+fn get_initial_stations_by_protocol(
+    proto: InboundServerProtocol,
+    base_authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>,
+) -> Vec<Box<dyn BridgeStation>> {
     match proto {
         InboundServerProtocol::Http => {
-            let proxy_server = HTTPTunnelProtocolStation::new();
+            let proxy_server = HTTPTunnelProtocolStation::new(
+                base_authentication_manager,
+            );
             vec![Box::new(proxy_server)]
         }
         _ => todo!(),

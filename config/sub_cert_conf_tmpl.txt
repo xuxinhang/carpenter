@@ -8,8 +8,8 @@ req_extensions          = req_extensions
 C  = CN
 ST = CQ
 L  = CQ
-O  = _Carpenter
-OU = _Carpenter
+O  = _You_are_using_Carpenter
+OU = _You_are_using_Carpenter
 {{ALT_NAMES_BOTH_EN}}CN = {{ALT_NAMES_DNS_VAL}}
 
 [req_extensions]

@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::io;
+use std::rc::Rc;
+
 pub mod event_loop;
 pub mod http_header_parser;
 pub mod transformer;
@@ -15,16 +19,41 @@ pub mod credential;
 pub mod bridge;
 pub mod stations;
 pub mod listener;
+pub mod helper;
 
-use std::rc::Rc;
-use crate::event_loop::EventLoop;
-use crate::configuration::InboundServerProtocol;
-use crate::listener::launch_server_listener;
-use crate::server::ProxyServer;
+use authorization::verifiers::{load_simple_credentials_from_file, AuthenticationVerifier, FreeAuthenticationVerifier};
+use event_loop::EventLoop;
+use configuration::{InboundServerProtocol};
+use listener::launch_server_listener;
+use server::ProxyServer;
 
+
+const _WELCOME_ART_1: &str = r"
+     a88888b.                                                dP
+    d8'   `88                                                88
+    88        .d8888b. 88d888b. 88d888b. .d8888b. 88d888b. d8888P .d8888b. 88d888b.
+    88        88'  `88 88'  `88 88'  `88 88ooood8 88'  `88   88   88ooood8 88'  `88
+    Y8.   .88 88.  .88 88       88.  .88 88.  ... 88    88   88   88.  ... 88
+     Y88888P' `88888P8 dP       88Y888P' `88888P' dP    dP   dP   `88888P' dP
+                                88
+                                dP
+";
+
+const WELCOME_ART_2: &str = r"
+       ___                                   _
+      / __\  __ _  _ __  _ __    ___  _ __  | |_   ___  _ __
+     / /    / _` || '__|| '_ \  / _ \| '_ \ | __| / _ \| '__|
+    / /___ | (_| || |   | |_) ||  __/| | | || |_ |  __/| |
+    \____/  \__,_||_|   | .__/  \___||_| |_| \__| \___||_|
+                        |_|
+";
+
+
+const SIMPLE_CREDENTIAL_FILE: &str = "./config/simple_credentials.txt";
 
 fn main() {
-    print!("Hello, mio!\n");
+    println!("{}", WELCOME_ART_2);
+    println!("_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ ");
 
     // initialize global static variables
     global::init_global_stuff();
@@ -43,26 +72,34 @@ fn main() {
         panic!();
     }
 
-    // start server and event loop
-    let mut el = EventLoop::new(1024).unwrap();
+    // authentication infrastructure
+    let res = create_default_authentication_storage();
+    if let Err(e) = res {
+        wd_log::log_error_ln!("Fail to create authentication manager: {:?}", e);
+        panic!();
+    }
+    let authentication_manager = Rc::new(RefCell::new(res.unwrap()));
 
-    let server_count = start_proxy_server(&mut el);
+    // register server
+    let mut el = EventLoop::new(1024).unwrap();
+    let server_count = register_servers(&mut el, authentication_manager.clone());
     if server_count == 0 {
-        println!("WARNING: NO ANY PROXY SERVER RUNNING!");
+        wd_log::log_warn_ln!("No proxy server is running. Please check your configuration.");
     }
 
+    // start event loop
     match el.start_loop() {
-        Ok(()) => {
-            println!("Event loop ends.");
+        Ok(_) => {
+            wd_log::log_info_ln!("Event loop exited normally.");
         }
         Err(e) => {
-            println!("Event lopp error\n{:?}", e);
+            wd_log::log_error_ln!("Event loop exited with error: {:?}", e);
         }
     }
 }
 
 
-fn check_and_prepare_root_certificate() -> std::io::Result<()> {
+fn check_and_prepare_root_certificate() -> io::Result<()> {
     use std::path::Path;
     use std::fs;
 
@@ -81,7 +118,7 @@ fn check_and_prepare_root_certificate() -> std::io::Result<()> {
     }
 
     let note_file_path = Path::new("./_certs/NEED_TO_INSTALL_ROOT_CA");
-    let openssl_path = crate::global::get_global_config().core.env_openssl_path.as_str();
+    let openssl_path = global::get_global_config().core.env_openssl_path.as_str();
 
     if !Path::new(root_crt_file_path).exists()
         || !Path::new(root_key_file_path).exists()
@@ -115,31 +152,38 @@ fn check_and_prepare_root_certificate() -> std::io::Result<()> {
 }
 
 
-fn start_proxy_server(el: &mut EventLoop) -> usize {
+fn create_default_authentication_storage() -> io::Result<Box<dyn AuthenticationVerifier>> {
+    let verifier = &global::get_global_config().core.authentication_verifier;
+    match verifier {
+        configuration::AuthenticationVerifierDescriptor::Free => {
+            Ok(Box::new(FreeAuthenticationVerifier::new()))
+        },
+        configuration::AuthenticationVerifierDescriptor::Simple(_) => {
+            use crate::authorization::verifiers::SimpleAuthenticationVerifier;
+            let credentials = load_simple_credentials_from_file(SIMPLE_CREDENTIAL_FILE)?;
+            let manager = SimpleAuthenticationVerifier::new(&credentials);
+            Ok(Box::new(manager))
+        }
+    }
+}
+
+
+fn register_servers(el: &mut EventLoop, authentication_manager: Rc<RefCell<Box<dyn AuthenticationVerifier>>>) -> usize {
     let mut listen_count = 0;
-    let global_config = crate::global::get_global_config();
+    let global_config = global::get_global_config();
     let inbound_server_config = &global_config.core.inbound_server;
 
     for (key, cfg) in inbound_server_config.iter() {
         let listen_addr = cfg.addr;
         match cfg.protocol {
-            /* InboundServerProtocol::Http => {
-                let s = server::http_server::HttpProxyServer::new(listen_addr);
-                if let Err(e) = s {
-                    wd_log::log_error_ln!("Fail to create proxy server \"{}\": {:?}", key, e);
-                    continue;
-                }
-                let server = s.unwrap();
-                if let Err(e) = server.launch(el) {
-                    wd_log::log_error_ln!("Proxy server \"{}\" fail to listen on {}: {:?}", key, listen_addr, e);
-                } else {
-                    wd_log::log_info_ln!("Proxy server \"{}\" running on {}", key, listen_addr);
-                    listen_count += 1;
-                }
-            } */
             InboundServerProtocol::Http => {
-                if let Err(e) = launch_server_listener(InboundServerProtocol::Http, listen_addr, el) {
-                    wd_log::log_error_ln!("Fail to launch generic incominglistener \"{}\": {:?}", key, e);
+                if let Err(e) = launch_server_listener(
+                    el,
+                    InboundServerProtocol::Http,
+                    listen_addr,
+                    authentication_manager.clone()
+                ) {
+                    wd_log::log_error_ln!("Fail to launch generic incoming listener \"{}\": {:?}", key, e);
                     continue;
                 }
             }

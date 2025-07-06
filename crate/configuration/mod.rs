@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::Path;
 use std::io::{BufRead, BufReader, Read};
-use std::collections::HashMap;
+use std::collections::{HashMap};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use crate::authorization::verifiers::SimpleAuthenticationVerifier;
 use crate::uri_match::{HostMatchTree};
 use crate::common::{HostName, HostAddr};
 
@@ -57,9 +58,9 @@ pub fn load_default_configuration() -> GlobalConfiguration {
 
     // construct global configuration structure
     GlobalConfiguration {
-        transformer_matcher: transformer_matcher,
-        querier_matcher: querier_matcher,
-        outbound_matcher: outbound_matcher,
+        transformer_matcher,
+        querier_matcher,
+        outbound_matcher,
         core: core_cfg,
     }
 }
@@ -119,7 +120,7 @@ fn parse_matcher_line(line: &str) -> Option<(String, u16, String)> {
     let port = port_str.parse().unwrap_or(0) as u16;
     let hostname = hostname.trim();
 
-    return Some((hostname.to_string(), port, prof_str));
+    Some((hostname.to_string(), port, prof_str))
 }
 
 
@@ -266,7 +267,19 @@ pub struct InboundServer {
     pub hostname: Option<HostName>,
 }
 
-#[derive(Debug)]
+pub enum AuthenticationVerifierDescriptor {
+    Free,
+    Simple(SimpleAuthenticationVerifier),
+    /* External */
+}
+
+
+#[derive(Debug, PartialEq)]
+#[derive(Hash)]
+#[derive(Eq)]
+pub enum AuthenticationScheme { Basic, DigestSha2256, DigestMd5 }
+
+
 pub struct CoreConfig {
     pub env_openssl_path: String,
     pub inbound_http_enable: bool,
@@ -277,6 +290,7 @@ pub struct CoreConfig {
     pub dns_server: HashMap<String, (DnsServerProtocol, SocketAddr)>,
     pub outbound_client: HashMap<String, OutboundClient>,
     pub inbound_server: HashMap<String, InboundServer>,
+    pub authentication_verifier: AuthenticationVerifierDescriptor,
 }
 
 fn parse_core_config(cfg_str: &str) -> CoreConfig {
@@ -284,6 +298,7 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
         env_openssl_path: String::from("openssl"),
         inbound_http_enable: false,
         inbound_http_listen: String::new(),
+        authentication_verifier: AuthenticationVerifierDescriptor::Free,
         log_level: 5,
         dns_cache_expiration: 7200,
         dns_load_local_host_file: true,
@@ -377,6 +392,24 @@ fn parse_core_config(cfg_str: &str) -> CoreConfig {
         cfg.log_level = t.get("level").map(|x| x.as_integer()).flatten().unwrap_or(5) as u8;
     } else {
         cfg.log_level = 5;
+    }
+
+    if let Some(t) = toml_root.get("authentication").map(|x| x.as_table()).flatten() {
+        cfg.authentication_verifier = match t.get("verifier").map(|x| x.as_str()).flatten() {
+            Some("free") => AuthenticationVerifierDescriptor::Free,
+            Some("simple") => {
+                let file_name = "./config/simple_credentials.txt";
+                let reader = BufReader::new(fs::File::open(file_name).unwrap());
+                let auth_lines = reader.lines()
+                    .map(|line| line.expect("Unable to read line"))
+                    .filter(|line| line.len() > 0 && !line.starts_with('#'))
+                    .collect();
+                AuthenticationVerifierDescriptor::Simple(SimpleAuthenticationVerifier::new(&auth_lines))
+            },
+            _ => AuthenticationVerifierDescriptor::Free,
+        };
+    } else {
+        cfg.authentication_verifier = AuthenticationVerifierDescriptor::Free;
     }
 
     if let Some(t) = toml_root.get("dns").map(|x| x.as_table()).flatten() {

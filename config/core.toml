@@ -1,6 +1,9 @@
 [env]
 openssl_path = "E:\\Program Files\\Git\\usr\\bin\\openssl.exe"
 
+[authentication]
+verifier = "simple"
+scheme = "basic,digest-sha2-256,digest-md5"
 
 [inbound.normal]
 enable = true

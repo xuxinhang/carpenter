@@ -101,6 +101,16 @@ impl From<SocketAddr> for HostAddress {
     }
 }
 
+impl FromStr for HostAddress {
+    type Err = HostParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (ns, ps) = s.rsplit_once(':').ok_or(HostParseError())?;
+        let nn = Hostname::from_str(ns)?;
+        let pp: u16 = ps.parse().map_err(|_| HostParseError())?;
+        Ok(Self(nn, pp))
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Hostname {
     IpAddress(std::net::IpAddr),
