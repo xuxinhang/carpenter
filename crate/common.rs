@@ -81,14 +81,14 @@ impl ToString for HostAddr {
         }
         cont.push(':');
         cont.push_str(self.port().to_string().as_str());
-        return cont;
+        cont
     }
 }
 
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostName {
-    IpAddress(std::net::IpAddr),
+    IpAddress(IpAddr),
     DomainName(String),
 }
 
@@ -113,8 +113,8 @@ impl FromStr for HostAddress {
 
 #[derive(Clone, Debug)]
 pub enum Hostname {
-    IpAddress(std::net::IpAddr),
-    DnsName(domain::base::Dname<Vec<u8>>),
+    IpAddress(IpAddr),
+    DnsName(Dname<Vec<u8>>),
 }
 
 impl ToString for Hostname {
@@ -133,7 +133,7 @@ impl FromStr for Hostname {
         if let Ok(x) = s.parse() {
             return Ok(Self::IpAddress(x));
         }
-        if let Ok(x) = domain::base::Dname::from_str(s) {
+        if let Ok(x) = Dname::from_str(s) {
             return Ok(Self::DnsName(x));
         }
         Err(HostParseError())
@@ -211,8 +211,7 @@ impl FromStr for HostName {
 pub fn load_tls_certificate(file_path: &str) -> io::Result<Vec<rustls::Certificate>> {
     let certname = file_path;
     let certfile = fs::File::open(certname)?;
-    let certdata = rustls_pemfile::certs(&mut io::BufReader::new(certfile))
-        .unwrap()
+    let certdata = rustls_pemfile::certs(&mut io::BufReader::new(certfile))?
         .iter()
         .map(|v| rustls::Certificate(v.clone()))
         .collect();

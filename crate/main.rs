@@ -24,7 +24,7 @@ pub mod helper;
 use authorization::verifiers::{load_simple_credentials_from_file, AuthenticationVerifier, FreeAuthenticationVerifier};
 use event_loop::EventLoop;
 use listener::launch_server_listener;
-
+use crate::certmgr::certstorage::{fetch_or_generate_tls_root_certificate, prepare_certificate_storage_filesystem_structure};
 
 const _WELCOME_ART_1: &str = r"
      a88888b.                                                dP
@@ -56,7 +56,7 @@ fn main() {
     // initialize global static variables
     global::init_global_stuff();
 
-    // load config from file
+    // load config from files
     wd_log::log_info_ln!("Loading config...");
     let conf = Rc::new(configuration::load_default_configuration());
     global::publish_global_config(conf.clone());
@@ -65,9 +65,17 @@ fn main() {
     wd_log::set_level(wd_log::Level::from(conf.core.log_level));
 
     // prepare root certificates
-    if let Err(e) = check_and_prepare_root_certificate() {
+    prepare_certificate_storage_filesystem_structure();
+    if let Err(e) = fetch_or_generate_tls_root_certificate() {
         wd_log::log_error_ln!("Fail to prepare certificates: {:?}", e);
         panic!();
+    }
+
+    if std::path::Path::new(certmgr::certstorage::ROOT_CA_FLAG_PATH).exists() {
+        println!("\n---------");
+        println!("  Remember to install the certificate \"_certs/root.crt.crt\" as root CA to your OS or browser.");
+        println!("  ... If done, delete or rename \"_certs/NEED_TO_INSTALL_ROOT_CA\" to hide this message.");
+        println!("---------\n");
     }
 
     // authentication infrastructure
@@ -94,59 +102,6 @@ fn main() {
             wd_log::log_error_ln!("Event loop exited with error: {:?}", e);
         }
     }
-}
-
-
-fn check_and_prepare_root_certificate() -> io::Result<()> {
-    use std::path::Path;
-    use std::fs;
-
-    let root_crt_file_path = "./_certs/root.crt.crt";
-    let root_key_file_path = "./_certs/root.key.pem";
-    let root_cfg_file_path = "./config/root_cert_config.txt";
-
-    let p = Path::new("./_certs");
-    if !p.exists()  {
-        fs::create_dir(p)?;
-    }
-
-    let p = Path::new("./_certs/issued");
-    if !p.exists()  {
-        fs::create_dir(p)?;
-    }
-
-    let note_file_path = Path::new("./_certs/NEED_TO_INSTALL_ROOT_CA");
-    let openssl_path = global::get_global_config().core.env_openssl_path.as_str();
-
-    if !Path::new(root_crt_file_path).exists()
-        || !Path::new(root_key_file_path).exists()
-    {
-        let p = Path::new(root_cfg_file_path);
-        if !p.exists() {
-            fs::File::open(p)?; // generate an error
-        }
-        std::process::Command::new(&openssl_path)
-            .args([
-                "req", "-new", "-x509",
-                "-newkey", "rsa:2048", "-nodes", "-keyout", root_key_file_path,
-                "-days", "36500",
-                "-out", root_crt_file_path,
-                "-config", root_cfg_file_path,
-            ])
-            .output()?;
-        if !note_file_path.exists() {
-            let _ = fs::File::create(note_file_path)?;
-        }
-    }
-
-    if note_file_path.exists() {
-        println!("\n---------");
-        println!("  Remember to install the certificate \"_certs/root.crt.crt\" as root CA to your OS or browser.");
-        println!("  ... If done, delete or rename \"_certs/NEED_TO_INSTALL_ROOT_CA\" to hide this message.");
-        println!("---------\n");
-    }
-
-    Ok(())
 }
 
 
@@ -180,34 +135,6 @@ fn register_servers(el: &mut EventLoop, authentication_manager: Rc<RefCell<Box<d
         }
 
         listen_count += 1;
-        
-        /*
-        match cfg.protocol {
-            InboundServerProtocol::Http => {
-                if let Err(e) = launch_server_listener(
-                    el,
-                    InboundServerProtocol::Http,
-                    listen_addr,
-                    authentication_manager.clone()
-                ) {
-                    wd_log::log_error_ln!("Fail to launch generic incoming listener \"{}\": {:?}", key, e);
-                    continue;
-                }
-            }
-            InboundServerProtocol::HttpOverTls => {
-                let server = server::https_server::ProxyServerHttpOverTls::new(
-                    listen_addr,
-                    cfg.hostname.clone().unwrap_or("localhost".parse().unwrap()),
-                ).unwrap();
-                if let Err(e) = server.launch(el) {
-                    wd_log::log_error_ln!("Proxy server \"{}\" fail to listen on {}: {:?}", key, listen_addr, e);
-                } else {
-                    wd_log::log_info_ln!("Proxy server \"{}\" running on {}", key, listen_addr);
-                    listen_count += 1;
-                }
-            }
-        }
-        */
     }
 
     listen_count

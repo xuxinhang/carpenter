@@ -1,11 +1,11 @@
 use std::io::{Read, Write};
-use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig, ServerName};
-use crate::bridge::{BridgeStation, BridgeResult, BridgeError, BridgeBuffer, BridgeStationTransferRecord};
-use crate::certmgr::certstorage::get_cert_data_by_hostname;
-use crate::common::{convert_Hostname_to_HostName, HostName, Hostname};
+use rustls::{ServerConnection, ServerConfig};
+use crate::bridge::{BridgeStation, BridgeResult, BridgeError, BridgeStationTransferRecord};
+use crate::certmgr::certstorage;
+use crate::common::{Hostname};
 
 
-const SINGLE_BRUST_SIZE_LIMIT: usize = 512 * 1024; // = 512 KB
+const SINGLE_BURST_SIZE_LIMIT: usize = 512 * 1024; // = 512 KB
 
 
 #[derive(PartialEq, Debug)]
@@ -39,10 +39,11 @@ impl TlsClosingStage {
 impl TlsUniversalServerStation {
     pub fn new(target_hostname: Hostname) -> Self {
         let host_name = target_hostname.clone();
-        let (local_tls_cert_data, local_tls_pkey_data) =
-            get_cert_data_by_hostname(
-                Some(convert_Hostname_to_HostName(&host_name.clone()))
-            ).unwrap(); // TODO
+
+        let local_tls_cert_data =
+            certstorage::fetch_or_generate_tls_repack_certificate_file(&host_name).unwrap();
+        let local_tls_pkey_data =
+            certstorage::fetch_or_generate_tls_repack_private_key_file(&host_name).unwrap();
 
         let local_tls_conf = std::sync::Arc::new(
             ServerConfig::builder()
@@ -53,7 +54,7 @@ impl TlsUniversalServerStation {
         );
 
         let mut local_tls =  ServerConnection::new(local_tls_conf).unwrap();
-        local_tls.set_buffer_limit(Some(SINGLE_BRUST_SIZE_LIMIT * 2));
+        local_tls.set_buffer_limit(Some(SINGLE_BURST_SIZE_LIMIT * 2));
 
         Self {
             tls_server: local_tls,
@@ -109,7 +110,7 @@ impl BridgeStation for TlsUniversalServerStation {
 
         // read out plain texts, write them into its pair tls or the buffer. 
         let text_read_size = self.tls_server.reader().read(buf).unwrap();
-        return Ok(BridgeStationTransferRecord::Some(text_read_size));
+        Ok(BridgeStationTransferRecord::Some(text_read_size))
     }
 
     fn remote_write(&mut self, buf: &[u8]) -> BridgeResult {

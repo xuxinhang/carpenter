@@ -1,9 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
-use domain::base::iana::Opcode::Status;
 use crate::bridge::{BridgeError, BridgeResult, BridgeStation, BridgeStationDownwardMessage, BridgeStationMessageDequeAccessor, BridgeStationTransferRecord, BridgeStationUpwardMessage};
 use crate::common::HostAddress;
-use crate::stations::server::http_tunnel::HTTPTunnelProtocolStation;
 
 pub struct HttpTunnelProtocolClientStation {
     station_message_upward: BridgeStationMessageDequeAccessor<BridgeStationUpwardMessage>,
@@ -41,7 +39,7 @@ impl HttpTunnelProtocolClientStation {
 }
 
 impl BridgeStation for HttpTunnelProtocolClientStation {
-    fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
+    fn local_write(&mut self, _buf: &[u8]) -> BridgeResult {
         match self.status {
             HttpTunnelProtocolClientStatus::Running => unreachable!(),
             HttpTunnelProtocolClientStatus::Closed => Ok(BridgeStationTransferRecord::End),
@@ -49,7 +47,7 @@ impl BridgeStation for HttpTunnelProtocolClientStation {
         }
     }
 
-    fn local_read(&mut self, buf: &mut [u8]) -> BridgeResult {
+    fn local_read(&mut self, _buf: &mut [u8]) -> BridgeResult {
         match self.status {
             HttpTunnelProtocolClientStatus::Running => unreachable!(),
             HttpTunnelProtocolClientStatus::Closed => Ok(BridgeStationTransferRecord::End),

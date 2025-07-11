@@ -122,8 +122,8 @@ pub trait BridgeStation {
     fn remote_read_end(&mut self) -> () {}
 
     fn set_message_queue(&mut self,
-                         downward: BridgeStationMessageDequeAccessor<BridgeStationDownwardMessage>,
-                         upward: BridgeStationMessageDequeAccessor<BridgeStationUpwardMessage>) {
+                         _downward: BridgeStationMessageDequeAccessor<BridgeStationDownwardMessage>,
+                         _upward: BridgeStationMessageDequeAccessor<BridgeStationUpwardMessage>) {
         ()
     }
 
@@ -141,7 +141,7 @@ impl BridgeStation for BridgeNullRemoteTerminal {
         Ok(BridgeStationTransferRecord::Some(0))
     }
 
-    fn local_read(&mut self, buf: &mut [u8]) -> BridgeResult {
+    fn local_read(&mut self, _buf: &mut [u8]) -> BridgeResult {
         Ok(BridgeStationTransferRecord::Some(0))
     }
 
@@ -150,7 +150,7 @@ impl BridgeStation for BridgeNullRemoteTerminal {
         Ok(BridgeStationTransferRecord::Some(0))
     }
 
-    fn remote_read(&mut self, buf: &mut [u8]) -> BridgeResult {
+    fn remote_read(&mut self, _buf: &mut [u8]) -> BridgeResult {
         Ok(BridgeStationTransferRecord::Some(0))
     }
 }
@@ -172,11 +172,11 @@ impl BridgeTCPStreamLocalTerminal {
 }
 
 impl BridgeStation for BridgeTCPStreamLocalTerminal {
-    fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
+    fn local_write(&mut self, _buf: &[u8]) -> BridgeResult {
         unreachable!()
     }
 
-    fn local_read(&mut self, buf: &mut [u8]) -> BridgeResult {
+    fn local_read(&mut self, _buf: &mut [u8]) -> BridgeResult {
         unreachable!()
     }
 
@@ -231,13 +231,6 @@ struct BridgeTCPStreamRemoteTerminal {
 }
 
 impl BridgeTCPStreamRemoteTerminal {
-    pub fn from_token(stream: TcpStream, listener_token: Token) -> Self {
-        Self {
-            stream,
-            listener_token,
-            listener_registered: 0,
-        }
-    }
 }
 
 impl BridgeStation for BridgeTCPStreamRemoteTerminal {
@@ -283,11 +276,11 @@ impl BridgeStation for BridgeTCPStreamRemoteTerminal {
         res
     }
 
-    fn remote_write(&mut self, buf: &[u8]) -> BridgeResult {
+    fn remote_write(&mut self, _buf: &[u8]) -> BridgeResult {
         unreachable!()
     }
 
-    fn remote_read(&mut self, buf: &mut [u8]) -> BridgeResult {
+    fn remote_read(&mut self, _buf: &mut [u8]) -> BridgeResult {
         unreachable!()
     }
 }
@@ -313,7 +306,7 @@ pub struct BridgeChain {
 impl BridgeChain {
     pub fn from_existed(
         mut local_terminal: BridgeTCPStreamLocalTerminal,
-        mut initial_stations: Vec<Box<dyn BridgeStation>>,
+        initial_stations: Vec<Box<dyn BridgeStation>>,
     ) -> Self {
         let station_count = initial_stations.len();
         let buffer_count = station_count + 1;
@@ -418,9 +411,6 @@ impl BridgeChain {
                 $var = $next;
             };
         }
-
-        let is_terminal_snapshot_operable =
-            |s: Option<usize>| s.map_or(false, |x| x != 0);
 
         // local terminal
         {
@@ -563,7 +553,7 @@ impl BridgeChain {
 
     fn remove_station(&mut self, station_id: usize) {
         let station_index = self.stations.iter()
-            .position(|(si, sb)| *si == station_id).unwrap();
+            .position(|(idx, _bridge)| *idx == station_id).unwrap();
         self.stations.remove(station_index);
 
         let local_side_buffers = &self.buffers[station_index];
@@ -849,12 +839,12 @@ impl BridgeBuffer {
         }
     }
 
-    pub fn write_into(&mut self, writter: &mut dyn BridgeStation, side: bool) -> BridgeResult {
+    pub fn write_into(&mut self, writer: &mut dyn BridgeStation, side: bool) -> BridgeResult {
         if self.wants_read() == 0 && self.data_in_end {
             if !side {
-                writter.local_write_end()
+                writer.local_write_end()
             } else {
-                writter.remote_write_end()
+                writer.remote_write_end()
             }
             return Ok(BridgeStationTransferRecord::End);
         }
@@ -865,9 +855,9 @@ impl BridgeBuffer {
 
         let (head, _tail) = self.deque.as_slices();
         let res = if !side {
-            writter.local_write(head)
+            writer.local_write(head)
         } else {
-            writter.remote_write(head)
+            writer.remote_write(head)
         };
 
         match res {
