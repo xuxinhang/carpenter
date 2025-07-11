@@ -2,7 +2,7 @@ use std::net::{IpAddr};
 use std::str::FromStr;
 use crate::event_loop::{EventLoop};
 use crate::configuration::{QuerierAction, DnsServerProtocol};
-use crate::common::{HostName, Hostname};
+use crate::common::{Hostname};
 
 
 mod utils;
@@ -38,16 +38,16 @@ pub trait DnsResolver {
 
 
 pub struct DnsQueier {
-    hostname: HostName,
+    hostname: Hostname,
 }
 
 impl DnsQueier {
-    pub fn new(hostname: HostName) -> Self {
+    pub fn new(hostname: Hostname) -> Self {
         Self { hostname }
     }
     
     pub fn new2(hostname: &domain::base::Dname<Vec<u8>>) -> Self {
-        Self::new(HostName::DomainName(hostname.to_string()))
+        Self::new(Hostname::DnsName(hostname.clone()))
     }
 
     pub fn query_cache(&self, hostname: &str) -> Option<IpAddr> {
@@ -64,12 +64,12 @@ impl DnsQueier {
 
         // Return itself directly if IpAddr
         match self.hostname {
-            HostName::IpAddress(v) => {
+            Hostname::IpAddress(v) => {
                 let ipaddr = v;
                 query_ready_callback.ready(Some(ipaddr), event_loop);
                 return Some(ipaddr);
             }
-            HostName::DomainName(_) => {}
+            Hostname::DnsName(_) => {}
         }
 
         // Lookup the cache first
@@ -128,7 +128,7 @@ impl DnsQueier {
             }
         }
 
-        return None;
+        None
     }
 }
 

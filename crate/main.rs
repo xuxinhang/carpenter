@@ -3,11 +3,7 @@ use std::io;
 use std::rc::Rc;
 
 pub mod event_loop;
-pub mod http_header_parser;
-pub mod transformer;
-pub mod server;
 pub mod configuration;
-pub mod proxy_client;
 pub mod common;
 pub mod uri_match;
 pub mod dnsresolver;
@@ -73,7 +69,7 @@ fn main() {
 
     if std::path::Path::new(certmgr::certstorage::ROOT_CA_FLAG_PATH).exists() {
         println!("\n---------");
-        println!("  Remember to install the certificate \"_certs/root.crt.crt\" as root CA to your OS or browser.");
+        println!("  Remember to install the certificate \"_certificates/root_ca/root_ca.crt\" as root CA to your OS or browser.");
         println!("  ... If done, delete or rename \"_certs/NEED_TO_INSTALL_ROOT_CA\" to hide this message.");
         println!("---------\n");
     }

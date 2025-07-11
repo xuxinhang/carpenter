@@ -7,7 +7,6 @@ use mio::net::TcpListener;
 use mio::{Interest, Token};
 use crate::authorization::verifiers::{AuthenticationVerifier};
 use crate::bridge::{BridgeChain, BridgeStation, BridgeTCPStreamLocalTerminal};
-use crate::common::{convert_HostName_to_Hostname};
 use crate::configuration::{InboundServer, InboundServerProtocol};
 use crate::event_loop::{EventHandler, EventLoop, EventRegistryIntf};
 use crate::stations::server::http_tunnel::HTTPTunnelProtocolStation;
@@ -102,7 +101,6 @@ fn get_initial_stations_by_protocol(
         }
         InboundServerProtocol::HttpOverTls => {
             let server_hostname = cfg.hostname.clone().unwrap_or("localhost".parse().unwrap());
-            let server_hostname = convert_HostName_to_Hostname(&server_hostname);
             println!("server_hostname, {:?}", &server_hostname);
             let http_proxy_server = HTTPTunnelProtocolStation::new(
                 base_authentication_manager,

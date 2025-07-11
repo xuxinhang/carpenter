@@ -1,6 +1,6 @@
 use std::{io, str::FromStr};
 use crate::bridge::{BridgeStation};
-use crate::common::{convert_HostAddress_to_HostAddr, HostAddress, Hostname};
+use crate::common::{HostAddress, Hostname};
 use crate::configuration::{OutboundAction, OutboundClientProtocol, TransformerAction};
 use crate::stations::modifiers::tls_packer::{TlsRepackerStation, TlsUnpackerStation};
 use crate::stations::client::http_client::HttpTunnelProtocolClientStation;
@@ -31,8 +31,8 @@ pub fn get_default_remote_link(target: HostAddress) -> RemoteLinkGuide {
 
 fn get_modifier_stations(host: &HostAddress) -> io::Result<Vec<Box<dyn BridgeStation>>> {
     let global_config = crate::global::get_global_config();
-    let transformer_config = global_config.get_transformer_action_by_host(
-        &convert_HostAddress_to_HostAddr(host));
+    let transformer_config =
+        global_config.get_transformer_action_by_host(&host);
 
     let mut all_stations: Vec<Box<dyn BridgeStation>> = vec![];
 
@@ -73,11 +73,8 @@ fn get_modifier_stations(host: &HostAddress) -> io::Result<Vec<Box<dyn BridgeSta
 pub fn get_client_protocol_link(target: &HostAddress)
     -> io::Result<(Vec<Box<dyn BridgeStation>>, Option<HostAddress>)> {
     let global_config = crate::global::get_global_config();
-    let mut t = convert_HostAddress_to_HostAddr(target);
-    t.1 = 0;
-    let outbound_config = global_config.get_outbound_action_by_host(
-        &t
-    ); // TODO
+    let outbound_config =
+        global_config.get_outbound_action_by_host(target); // TODO
 
     println!("get_client_protocol_link || target: {:?}, outbound_config: {:?}", target, outbound_config);
 

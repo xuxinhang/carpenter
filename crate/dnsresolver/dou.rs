@@ -89,7 +89,6 @@ impl EventHandler for DnsDouResolverSenderWritableHandler {
                 return;
             }
 
-            drop(prof);
             drop(borw);
 
             event_loop.reregister(Box::new(DnsDouResolverReceiverReadableHandler {

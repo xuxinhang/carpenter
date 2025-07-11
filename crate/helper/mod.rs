@@ -58,9 +58,9 @@ impl HttpRequestMessage {
         if self.is_tunnel_mode() {
             HostAddress::from_str(self.path.as_str())
         } else {
-            let u = url::Url::parse(&self.path).map_err(|e| HostParseError())?;
+            let u = url::Url::parse(&self.path).map_err(|_e| HostParseError())?;
             Ok(HostAddress(
-                u.host_str().ok_or(HostParseError())?.parse().map_err(|e| HostParseError())?,
+                u.host_str().ok_or(HostParseError())?.parse().map_err(|_e| HostParseError())?,
                 u.port().ok_or(HostParseError())?,
             ))
         }

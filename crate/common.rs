@@ -2,95 +2,12 @@ use std::io;
 use std::fs;
 use std::str::FromStr;
 use std::net::{SocketAddr, IpAddr};
-use std::convert::{TryInto, From};
+use std::convert::From;
 use domain::base::Dname;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct HostAddr(pub HostName, pub u16);
-
-impl HostAddr {
-    pub fn host(&self) -> HostName {
-        self.0.clone()
-    }
-    pub fn port(&self) -> u16 {
-        self.1
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct HostParseError();
 
-impl TryInto<SocketAddr> for HostAddr {
-    type Error = ();
-    fn try_into(self) -> Result<SocketAddr, Self::Error> {
-        if let HostName::IpAddress(h) = self.host() {
-            Ok((h, self.port()).into())
-        } else {
-            Err(())
-        }
-    }
-}
-
-impl From<SocketAddr> for HostAddr {
-    fn from(s: SocketAddr) -> Self {
-        HostAddr(HostName::IpAddress(s.ip()), s.port())
-    }
-}
-
-impl FromStr for HostAddr {
-    type Err = HostParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let first_char = s.chars().next();
-        let (h, i) = match first_char {
-            Some('[') => {
-                let i = s.find(']').ok_or(HostParseError())?;
-                let ip = s[1..i].parse().map_err(|_| HostParseError())?;
-                (HostName::IpAddress(ip), i+1)
-            }
-            Some(_) => {
-                let i = s.find(':').unwrap_or(s.len());
-                let ip = s[0..i].parse();
-                if ip.is_err() {
-                    (HostName::DomainName(s[0..i].to_string()), i)
-                } else {
-                    (HostName::IpAddress(ip.unwrap()), i)
-                }
-            }
-            _ => {
-                return Err(HostParseError());
-            }
-        };
-        let p = match s.chars().nth(i) {
-            Some(':') => s[i+1..].parse().map_err(|_| HostParseError())?,
-            None => 80,
-            _ => return Err(HostParseError()),
-        };
-
-        Ok(Self(h, p))
-    }
-}
-
-impl ToString for HostAddr {
-    fn to_string(&self) -> String {
-        let use_bracket = self.host().as_ip_address().map_or(false, |x| x.is_ipv6());
-        let mut cont = self.host().to_string();
-        if use_bracket {
-            cont.insert(0, '[');
-            cont.push(']');
-        }
-        cont.push(':');
-        cont.push_str(self.port().to_string().as_str());
-        cont
-    }
-}
-
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum HostName {
-    IpAddress(IpAddr),
-    DomainName(String),
-}
 
 #[derive(Clone, Debug)]
 pub struct HostAddress(pub Hostname, pub u16);
@@ -137,73 +54,6 @@ impl FromStr for Hostname {
             return Ok(Self::DnsName(x));
         }
         Err(HostParseError())
-    }
-}
-
-pub fn convert_HostAddress_to_HostAddr(h: &HostAddress) -> HostAddr {
-    HostAddr(convert_Hostname_to_HostName(&h.0), h.1)
-}
-
-pub fn convert_Hostname_to_HostName(h: &Hostname) -> HostName {
-    match h {
-        Hostname::IpAddress(ip) => HostName::IpAddress(ip.clone()),
-        Hostname::DnsName(dname) => HostName::DomainName(dname.to_string()),
-    }
-}
-
-pub fn convert_HostName_to_Hostname(h: &HostName) -> Hostname {
-    match h {
-        HostName::IpAddress(ip) => Hostname::IpAddress(ip.clone()),
-        HostName::DomainName(dname) => Hostname::DnsName(Dname::from_str(dname).unwrap()),
-    }
-}
-
-impl HostName {
-    fn _is_domain_name(&self) -> bool {
-        match self {
-            Self::IpAddress(_) => true,
-            Self::DomainName(_) => false,
-        }
-    }
-    fn _is_ip_address(&self) -> bool {
-        match self {
-            Self::IpAddress(_) => false,
-            Self::DomainName(_) => true,
-        }
-    }
-    fn as_ip_address(&self) -> Option<&IpAddr> {
-        match self {
-            Self::IpAddress(ref x) => Some(x),
-            Self::DomainName(_) => None,
-        }
-    }
-    fn _as_domain_name(&self) -> Option<&str> {
-        match self {
-            Self::IpAddress(_) => None,
-            Self::DomainName(ref x) => Some(x),
-        }
-    }
-}
-
-impl ToString for HostName {
-    fn to_string(&self) -> String {
-        match self {
-            Self::IpAddress(x) => x.to_string(),
-            Self::DomainName(x) => x.to_string(),
-        }
-    }
-}
-
-impl FromStr for HostName {
-    type Err = HostParseError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(x) = s.parse() {
-            Ok(Self::IpAddress(x))
-        } else {
-            // TODO: check whether a valid domain name
-            Ok(Self::DomainName(s.to_string()))
-        }
     }
 }
 

@@ -49,7 +49,7 @@ pub struct BridgeStationMessageDequeAccessor<T: Clone> {
 
 const BRIDGE_STATION_LOCAL_TERMINAL_STATION_ID: usize = 10;
 const BRIDGE_STATION_REMOTE_TERMINAL_STATION_ID: usize = 11;
-const BRIDGE_STATION_GENERAL_STATION_ID_BASE: usize = 20;
+const BRIDGE_STATION_GENERAL_STATION_ID_BASE: usize = 200;
 
 impl <T: Clone> BridgeStationMessageDequeAccessor<T> {
     pub fn from(new_id: usize, mrc: &Self) -> Self {
@@ -319,21 +319,6 @@ impl BridgeChain {
             upward_queue.clone_with_new_id(BRIDGE_STATION_LOCAL_TERMINAL_STATION_ID),
         );
 
-        // let mut init_buffers = Vec::with_capacity(buffer_count);
-        // for _ in 0..buffer_count {
-        //     init_buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
-        // }
-        // let mut init_stations : Vec<(usize, Box<dyn BridgeStation>)> =
-        //     initial_stations.into_iter().enumerate()
-        //         .map(|(i, s)| (i+ BRIDGE_STATION_GENERAL_STATION_ID_BASE, s))
-        //         .collect();
-        //
-        // init_stations.iter_mut().for_each(|(si, sb)|
-        //     sb.set_message_queue(
-        //         downward_queue.clone_with_new_id(*si),
-        //         upward_queue.clone_with_new_id(*si),
-        //     ));
-        //
         let zero_stations = Vec::with_capacity(station_count);
         let mut zero_buffers = Vec::with_capacity(buffer_count);
         zero_buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
@@ -347,7 +332,10 @@ impl BridgeChain {
             remote_terminal: None,
             remote_terminal_read_snapshot: terminal_initial_snapshot,
             remote_terminal_write_snapshot: terminal_initial_snapshot,
-            station_id_generator: Box::new(iter::successors(Some(300), |&n| Some(n + 1))),
+            station_id_generator:
+                Box::new(iter::successors(
+                    Some(BRIDGE_STATION_GENERAL_STATION_ID_BASE),
+                    |&n| Some(n + 1))),
             stations: zero_stations,
             buffers: zero_buffers,
             public_upward_message_queue: upward_queue,
@@ -562,7 +550,7 @@ impl BridgeChain {
             BridgeBuffer::merge(&local_side_buffers.0, &remote_side_buffers.0),
             BridgeBuffer::merge(&remote_side_buffers.1, &local_side_buffers.1)
         );
-        self.buffers.splice(station_index..station_index+2, std::iter::once(merged_buffers));
+        self.buffers.splice(station_index..station_index+2, iter::once(merged_buffers));
     }
 
     fn do_loop (&mut self) {
@@ -652,7 +640,7 @@ impl EventHandler for BridgeChain {
         Ok(())
     }
 
-    fn handle(mut self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
+    fn handle(mut self: Box<Self>, _event: &Event, event_loop: &mut EventLoop) {
         self.do_loop();
 
         if self.remote_link_guide.is_some() && self.remote_terminal.is_none() {

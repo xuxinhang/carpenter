@@ -13,7 +13,7 @@ impl EventTokenPool {
     pub fn get(&mut self) -> Token {
         let t = self.next_token;
         self.next_token = Token(self.next_token.0 + 1);
-        return t;
+        t
     }
 }
 
@@ -21,7 +21,7 @@ impl EventTokenPool {
 pub trait EventHandler {
     fn register(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
-    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
+    fn collect(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
 }
 
@@ -188,7 +188,7 @@ impl EventLoop {
 
                 // new
                 let mut triggered_listens_idx = Vec::new();
-                for (idx, (l_token, l_interest, l_handler_id)) in self.listens.iter().enumerate() {
+                for (idx, (l_token, l_interest, _l_handler_id)) in self.listens.iter().enumerate() {
                     if tok == *l_token && interest_and_event(l_interest, &evt).is_some() {
                         triggered_listens_idx.push(idx);
                     }

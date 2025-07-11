@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use crate::authorization::verifiers::SimpleAuthenticationVerifier;
 use crate::uri_match::{HostMatchTree};
-use crate::common::{HostName, HostAddr};
+use crate::common::{Hostname, HostAddress};
 
 
 /* System initialize */
@@ -66,10 +66,10 @@ pub fn load_default_configuration() -> GlobalConfiguration {
 }
 
 impl GlobalConfiguration {
-    pub fn get_transformer_action_by_host(&self, host: &HostAddr) -> Option<TransformerAction> {
-        match host.host() {
-            HostName::DomainName(ref s) => { // TODO
-                self.transformer_matcher.get(host.port(), s)
+    pub fn get_transformer_action_by_host(&self, host: &HostAddress) -> Option<TransformerAction> {
+        match host.0 {
+            Hostname::DnsName(ref s) => { // TODO
+                self.transformer_matcher.get(host.1, s.to_string().as_str())
             }
             _ => None,
         }
@@ -77,10 +77,10 @@ impl GlobalConfiguration {
     pub fn get_querier_action_by_domain_name(&self, domain_name: &str) -> Option<QuerierAction> {
         self.querier_matcher.get(0, domain_name)
     }
-    pub fn get_outbound_action_by_host(&self, host: &HostAddr) -> Option<OutboundAction> {
-        match host.host() {
-            HostName::DomainName(ref s) => {
-                self.outbound_matcher.get(host.port(), s)
+    pub fn get_outbound_action_by_host(&self, host: &HostAddress) -> Option<OutboundAction> {
+        match host.0 {
+            Hostname::DnsName(ref s) => {
+                self.outbound_matcher.get(host.1, s.to_string().as_str())
             }
             _ => None,
         }
@@ -251,7 +251,7 @@ pub struct OutboundClient {
     pub protocol: OutboundClientProtocol,
     pub addr: SocketAddr,
     pub dns_resolve: bool,
-    pub hostname: Option<HostName>,
+    pub hostname: Option<Hostname>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,7 +264,7 @@ pub enum InboundServerProtocol {
 pub struct InboundServer {
     pub protocol: InboundServerProtocol,
     pub addr: SocketAddr,
-    pub hostname: Option<HostName>,
+    pub hostname: Option<Hostname>,
 }
 
 pub enum AuthenticationVerifierDescriptor {
