@@ -52,7 +52,7 @@ impl DnsResolver for DnsDotResolver {
             ClientConfig::builder()
                 .with_safe_defaults()
                 // @HACK: don't check the certificate subject alt name due to
-                //        the lack of ability to check a IP address as a subject alt name
+                //        the lack of ability to check an IP address as a subject alt name
                 .with_custom_certificate_verifier(Arc::new(NoCertVerifier {}))
                 .with_no_client_auth();
         remote_tls_conf.enable_sni = false;
@@ -74,9 +74,9 @@ impl DnsResolver for DnsDotResolver {
         let conn = conn.unwrap();
 
         let mut profile = DnsDotResolverProfile {
-            conn: conn,
-            tls: tls,
-            token: token,
+            conn,
+            tls,
+            token,
             pending_dns_messages: Vec::new(),
             received_dns_messages: Vec::new(),
         };
@@ -96,16 +96,12 @@ impl DnsResolver for DnsDotResolver {
 
 
         let profile_ptr = Rc::new(RefCell::new(profile));
-        // let handler = DnsDotResolveRemoteReadableHandler {
-        //     profile: profile_ptr.clone(),
-        //     callback: callback,
-        // };
-        // event_loop.register(Box::new(handler)).unwrap();
         let handler = DnsDotResolveRemoteWritableHandler {
             profile: profile_ptr.clone(),
-            callback: callback,
+            callback,
+            registered_once: false,
         };
-        event_loop.register(Box::new(handler)).unwrap();
+        event_loop.collect(Box::new(handler)).unwrap();
     }
 }
 
@@ -120,17 +116,19 @@ struct DnsDotResolverProfile {
 struct DnsDotResolveRemoteWritableHandler {
     profile: Rc<RefCell<DnsDotResolverProfile>>,
     callback: Box<dyn DnsResolveCallback>,
+    registered_once: bool,
 }
 
 impl EventHandler for DnsDotResolveRemoteWritableHandler {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
-        registry.register(&mut prof.conn, prof.token, Interest::WRITABLE)
-    }
-
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        let prof = &mut *self.profile.borrow_mut();
-        registry.reregister(&mut prof.conn, prof.token, Interest::WRITABLE)
+        if self.registered_once {
+            registry.reregister(&mut prof.conn, prof.token, Interest::WRITABLE)?;
+        } else {
+            registry.register(&mut prof.conn, prof.token, Interest::WRITABLE)?;
+            self.registered_once = true;
+        }
+        Ok(())
     }
 
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop) {
@@ -150,7 +148,7 @@ impl EventHandler for DnsDotResolveRemoteWritableHandler {
             profile: self.profile.clone(),
             callback: self.callback,
         };
-        event_loop.reregister(Box::new(handler)).unwrap();
+        event_loop.collect(Box::new(handler)).unwrap();
     }
 }
 
@@ -160,12 +158,7 @@ struct DnsDotResolveRemoteReadableHandler {
 }
 
 impl EventHandler for DnsDotResolveRemoteReadableHandler {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        let prof = &mut *self.profile.borrow_mut();
-        registry.register(&mut prof.conn, prof.token, Interest::READABLE)
-    }
-
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         registry.reregister(&mut prof.conn, prof.token, Interest::READABLE)
     }
@@ -240,9 +233,7 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                 }
 
                 if !prof.tls.is_handshaking() {
-                    if prof.pending_dns_messages.is_empty() {
-                        // do nothing
-                    } else {
+                    if !prof.pending_dns_messages.is_empty() {
                         let msg_dat = prof.pending_dns_messages.remove(0);
                         let msg_len = msg_dat.len();
                         match prof.tls.writer().write(&msg_dat) {
@@ -265,7 +256,8 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
         let handler = DnsDotResolveRemoteWritableHandler {
             profile: self.profile.clone(),
             callback: self.callback,
+            registered_once: true,
         };
-        event_loop.reregister(Box::new(handler)).unwrap();
+        event_loop.collect(Box::new(handler)).unwrap();
     }
 }

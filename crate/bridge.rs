@@ -241,7 +241,7 @@ impl BridgeStation for BridgeTCPStreamRemoteTerminal {
                 Ok(BridgeStationTransferRecord::End)
             },
             Ok(n) => {
-                wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_write: Ok(n=)");
+                wd_log::log_debug_ln!("BridgeTCPStreamRemoteTerminal -> local_write: Ok(n={})", n);
                 Ok(BridgeStationTransferRecord::Some(n))
             },
             Err(e) => match e.kind() {
@@ -323,15 +323,15 @@ impl BridgeChain {
         let mut zero_buffers = Vec::with_capacity(buffer_count);
         zero_buffers.push((BridgeBuffer::new(), BridgeBuffer::new()));
 
-        let terminal_initial_snapshot = BridgeStationTransferRecord::Wait;
+        const INITIAL_SNAPSHOT: BridgeStationTransferRecord = BridgeStationTransferRecord::Wait;
 
         let mut bridge = Self {
             local_terminal,
-            local_terminal_read_snapshot: terminal_initial_snapshot,
-            local_terminal_write_snapshot: terminal_initial_snapshot,
+            local_terminal_read_snapshot: INITIAL_SNAPSHOT,
+            local_terminal_write_snapshot: INITIAL_SNAPSHOT,
             remote_terminal: None,
-            remote_terminal_read_snapshot: terminal_initial_snapshot,
-            remote_terminal_write_snapshot: terminal_initial_snapshot,
+            remote_terminal_read_snapshot: INITIAL_SNAPSHOT,
+            remote_terminal_write_snapshot: INITIAL_SNAPSHOT,
             station_id_generator:
                 Box::new(iter::successors(
                     Some(BRIDGE_STATION_GENERAL_STATION_ID_BASE),
@@ -554,10 +554,11 @@ impl BridgeChain {
     }
 
     fn do_loop (&mut self) {
-        self.local_terminal_read_snapshot = BridgeStationTransferRecord::Some(1);
-        self.local_terminal_write_snapshot = BridgeStationTransferRecord::Some(1);
-        self.remote_terminal_read_snapshot = BridgeStationTransferRecord::Some(1);
-        self.remote_terminal_write_snapshot = BridgeStationTransferRecord::Some(1);
+        const RESET_SNAPSHOT: BridgeStationTransferRecord = BridgeStationTransferRecord::Some(1);
+        self.local_terminal_read_snapshot = RESET_SNAPSHOT;
+        self.local_terminal_write_snapshot = RESET_SNAPSHOT;
+        self.remote_terminal_read_snapshot = RESET_SNAPSHOT;
+        self.remote_terminal_write_snapshot = RESET_SNAPSHOT;
 
         // 1. do transfer among terminals and stations.
         loop {
@@ -575,7 +576,7 @@ impl BridgeChain {
         // 2. check terminals' latest snapshot
         let is_record_fully_operated = |s|
             match s {
-                BridgeStationTransferRecord::Some(n) if n > 0 => false,
+                BridgeStationTransferRecord::Some(n) if n > 0 => true,
                 _ => false,
             };
             // if let BridgeStationTransferRecord::Some(_) = s { true } else { false };
@@ -590,14 +591,6 @@ impl BridgeChain {
 
 
 impl EventHandler for BridgeChain {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        self.collect(registry)
-    }
-
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        self.collect(registry)
-    }
-
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         self.local_terminal_next_interest =
             match (self.local_terminal_read_snapshot, self.local_terminal_write_snapshot)  {
@@ -666,7 +659,7 @@ impl EventHandler for BridgeChain {
         }
 
         // local and remote terminal event
-        event_loop.reregister(self).unwrap();
+        event_loop.collect(self).unwrap();
     }
 }
 
@@ -684,7 +677,7 @@ impl DnsResolveCallback for DnsQueryOnLoadHandler {
                 hanged_bridge.public_downward_message_queue.push(
                     BridgeStationDownwardMessage::ServerKnowRemoteHandshakeFinished(false)
                 );
-                event_loop.reregister(hanged_bridge);
+                event_loop.collect(hanged_bridge).unwrap();
                 return;
             };
         }
@@ -707,7 +700,7 @@ impl DnsResolveCallback for DnsQueryOnLoadHandler {
             remote_stream: stream.unwrap(),
             remote_stream_token: stream_token,
         };
-        event_loop.register(Box::new(next_handler)).unwrap();
+        event_loop.collect(Box::new(next_handler)).unwrap();
     }
 }
 
@@ -718,7 +711,7 @@ struct RemoteTcpStreamOnConnectedHandler {
 }
 
 impl EventHandler for RemoteTcpStreamOnConnectedHandler {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         registry.register(&mut self.remote_stream, self.remote_stream_token, Interest::WRITABLE)
     }
 
@@ -857,7 +850,8 @@ impl BridgeBuffer {
                 self.data_out_end = true;
                 Ok(BridgeStationTransferRecord::End)
             }
-            _ => res,
+            Ok(BridgeStationTransferRecord::Wait) => res,
+            Err(_) => res,
         }
     }
 }

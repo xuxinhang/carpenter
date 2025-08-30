@@ -48,19 +48,11 @@ struct LocalStreamIncomingGenericServer {
 }
 
 impl EventHandler for LocalStreamIncomingGenericServer {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        registry.register(&mut self.listener, self.listener_token, Interest::READABLE)
-    }
-
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
-        registry.reregister(&mut self.listener, self.listener_token, Interest::READABLE)
-    }
-
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         if self.listener_registered == 0 {
-            self.register(registry)?;
+            registry.register(&mut self.listener, self.listener_token, Interest::READABLE)?;
         } else {
-            self.reregister(registry)?;
+            registry.reregister(&mut self.listener, self.listener_token, Interest::READABLE)?;
         }
         self.listener_registered += 1;
         Ok(())
@@ -83,7 +75,7 @@ impl EventHandler for LocalStreamIncomingGenericServer {
         let bridge = BridgeChain::from_existed(local_terminal, stations);
         event_loop.collect(Box::new(bridge)).unwrap();
 
-        event_loop.reregister(self).unwrap();
+        event_loop.collect(self).unwrap();
     }
 }
 

@@ -4,7 +4,7 @@ use crate::common::{HostAddress, Hostname};
 use crate::configuration::{OutboundAction, OutboundClientProtocol, TransformerAction};
 use crate::stations::modifiers::tls_packer::{TlsRepackerStation, TlsUnpackerStation};
 use crate::stations::client::http_client::HttpTunnelProtocolClientStation;
-
+use crate::stations::client::tls_client::TlsUniversalClientStation;
 
 pub struct RemoteLinkGuide {
     pub stream_address: HostAddress,
@@ -76,7 +76,7 @@ pub fn get_client_protocol_link(target: &HostAddress)
     let outbound_config =
         global_config.get_outbound_action_by_host(target); // TODO
 
-    println!("get_client_protocol_link || target: {:?}, outbound_config: {:?}", target, outbound_config);
+    wd_log::log_debug_ln!("get_client_protocol_link || target: {:?}, outbound_config: {:?}", target, outbound_config);
 
     let (protocol_stations, server_address): (Vec<Box<dyn BridgeStation>>, Option<HostAddress>) =
         match outbound_config {
@@ -87,13 +87,21 @@ pub fn get_client_protocol_link(target: &HostAddress)
 
                 match server_config.protocol {
                     OutboundClientProtocol::Http => {
-                        wd_log::log_debug_ln!("get_proxy_client :: use ProxyClientHttp");
                         (
                             vec![Box::new(HttpTunnelProtocolClientStation::new(target.clone()))],
                             Some(HostAddress::from(server_config.addr.clone())),
                         )
                     }
-                    OutboundClientProtocol::HttpOverTls => unreachable!(),
+                    OutboundClientProtocol::HttpOverTls => {
+                        let server_hostname = Hostname::IpAddress(server_config.addr.ip()); // TODO
+                        (
+                            vec![
+                                Box::new(HttpTunnelProtocolClientStation::new(target.clone())),
+                                Box::new(TlsUniversalClientStation::new(server_hostname)),
+                            ],
+                            Some(HostAddress::from(server_config.addr.clone())),
+                        )
+                    },
                 }
             }
         };

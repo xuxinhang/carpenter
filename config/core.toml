@@ -2,7 +2,7 @@
 openssl_path = "E:\\Program Files\\Git\\usr\\bin\\openssl.exe"
 
 [authentication]
-verifier = "simple"
+verifier = "free"
 scheme = "basic,digest-sha2-256,digest-md5"
 
 [inbound.normal]
@@ -12,7 +12,7 @@ listen = "http://0.0.0.0:7890"
 [inbound.secure]
 enable = true
 listen = "https://0.0.0.0:7899"
-hostname = "localhost"
+hostname = "127.0.0.1"
 
 
 [outbound.fanq]
@@ -22,6 +22,10 @@ origin = "http://127.0.0.1:10809"
 [outbound.tor]
 enable = true
 origin = "http://127.0.0.1:8118"
+
+[outbound.loop]
+enable = true
+origin = "https://localhost:7898"
 
 
 [log]
@@ -34,5 +38,10 @@ load-local-host-file = true
 
 
 [dns-server]
-normal = "udp://223.5.5.5"
-secure = "tls://1.1.1.1"
+normal = "udp://119.29.29.29"
+secure = "tls://101.102.103.104"
+
+# NextDNS 217.146.22.163
+# SWITCH Public DNS 130.59.31.251
+# DNS4EU 86.54.11.201
+# Twnc Taiwan 101.102.103.104

@@ -41,20 +41,15 @@ impl EventRegistryIntf {
         token: Token,
         interests: Interest,
     ) -> io::Result<()> {
-        // let sum_of_interests = match el.handlers.get(&token) {
-        //     None => {
-        //         el.handlers.insert(token, Vec::new());
-        //         interests
-        //     }
-        //     Some(lst) => {
-        //         lst.iter().fold(interests, |s, x| s | x.0)
-        //     }
-        // };
         let handler_id = self.3;
         self.get_event_loop().poll.registry().register(source, token, interests)?;
         self.1 = token.clone();
         self.2 = interests;
-        self.get_event_loop().listens.push((token, interests, handler_id));
+        self.get_event_loop().listens.push(EventListen {
+            token: token.clone(),
+            interest: interests.clone(),
+            handler_id,
+        });
         Ok(())
     }
 
@@ -64,40 +59,40 @@ impl EventRegistryIntf {
         token: Token,
         interests: Interest,
     ) -> io::Result<()> {
-        // let sum_of_interests = match el.handlers.get(&token) {
-        //     None => {
-        //         el.handlers.insert(token, Vec::new());
-        //         interests
-        //     }
-        //     Some(lst) => {
-        //         lst.iter().fold(interests, |s, x| s | x.0)
-        //     }
-        // };
         let handler_id = self.3;
         self.get_event_loop().poll.registry().reregister(source, token, interests)?;
         self.1 = token;
         self.2 = interests;
-        self.get_event_loop().listens.push((token, interests, handler_id));
+        self.get_event_loop().listens.push(EventListen {
+            token: token.clone(),
+            interest: interests.clone(),
+            handler_id,
+        });
         Ok(())
     }
 }
 
 
+struct EventListen {
+    pub token: Token,
+    pub interest: Interest,
+    pub handler_id: usize,
+}
+
+
 pub struct EventLoop {
     poll: Poll,
-    events: Events,
     registry_intf: EventRegistryIntf,
     handler_id_count: usize,
     handlers: HashMap<usize, Box<dyn EventHandler>>,
-    listens: Vec<(Token, Interest, usize)>,
+    listens: Vec<EventListen>,
     pub token: EventTokenPool,
 }
 
 impl EventLoop {
-    pub fn new(event_capacity: usize) -> io::Result<Self> {
+    pub fn new() -> io::Result<Self> {
         let mut this = EventLoop {
             poll: Poll::new()?,
-            events: Events::with_capacity(event_capacity),
             handlers: HashMap::new(),
             registry_intf: EventRegistryIntf(0, Token(0), Interest::READABLE, 0),
             token: EventTokenPool { next_token: Token(256) },
@@ -106,30 +101,6 @@ impl EventLoop {
         };
         this.registry_intf.0 = (&mut this.registry_intf as *mut _ as usize) - (&mut this as *mut _ as usize);
         Ok(this)
-    }
-
-    pub fn register(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
-        self.registry_intf.3 = self.handler_id_count;
-        hdlr.as_mut().register(&mut self.registry_intf)?;
-        // self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
-        // let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
-        // hdlr_vec.clear();
-        // hdlr_vec.push((self.registry_intf.2, hdlr));
-        self.handlers.insert(self.registry_intf.3, hdlr);
-        self.handler_id_count += 1;
-        Ok(())
-    }
-
-    pub fn reregister(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
-        self.registry_intf.3 = self.handler_id_count;
-        hdlr.as_mut().reregister(&mut self.registry_intf)?;
-        // self.handlers.get_mut(&self.registry_intf.1).unwrap().push((self.registry_intf.2, hdlr));
-        // let hdlr_vec = self.handlers.get_mut(&self.registry_intf.1).unwrap();
-        // hdlr_vec.clear();
-        // hdlr_vec.push((self.registry_intf.2, hdlr));
-        self.handlers.insert(self.registry_intf.3, hdlr);
-        self.handler_id_count += 1;
-        Ok(())
     }
 
     pub fn collect(&mut self, mut hdlr: Box<dyn EventHandler>) -> io::Result<()> {
@@ -149,84 +120,79 @@ impl EventLoop {
     // }
 
     pub fn start_loop(&mut self) -> io::Result<()> {
+        const EVENTS_CAPACITY: usize = 64;
+        
         loop {
-            self.poll.poll(&mut self.events, None)?;
+            let mut poll_events = Events::with_capacity(EVENTS_CAPACITY);
+            self.poll.poll(&mut poll_events, None)?;
 
-            let mut pending_events: Vec<(Event, Token)> = Vec::new();
+            for evt in poll_events.iter() {
+                let tok = evt.token();
 
-            for event in self.events.iter() {
-                let tok = event.token();
-                pending_events.push((event.clone(), tok));
-            }
+                let active_listens_idx: Vec<usize> =
+                    (0..self.listens.len())
+                        .filter(|&li| {
+                            let lx = &self.listens[li];
+                            tok == lx.token && interest_and_event(&lx.interest, &evt).is_some()
+                        })
+                        .collect();
 
-            for (evt, tok) in pending_events {
-                /* // old handler mode
-                if self.handlers.get(&tok).is_some() {
-                    let mut pending_hdlr_idx = Vec::new();
-                    let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
-                    for (idx, (inte, _)) in hdlr_lst.iter().enumerate() {
-                        if interest_and_event(inte, &evt).is_some() {
-                            pending_hdlr_idx.push(idx);
-                        }
-                    }
-                    pending_hdlr_idx.reverse();
+                let mut active_handlers = Vec::new();
 
-                    let mut pending_hdlr_box = Vec::from_iter(pending_hdlr_idx.iter().map(|x| {
-                        let (_, hdlr) = hdlr_lst.remove(*x);
-                        hdlr
-                    }));
-                    while !pending_hdlr_box.is_empty() {
-                        pending_hdlr_box.pop().unwrap().handle(&evt, self);
-                    }
-                    // remove useless items
-                    let hdlr_lst = self.handlers.get_mut(&tok).unwrap();
-                    if hdlr_lst.is_empty() {
-                        self.handlers.remove(&tok);
+                for li in &active_listens_idx {
+                    let lx = &self.listens[*li];
+                    if let Some(handler) = self.handlers.remove(&lx.handler_id) {
+                        active_handlers.push((handler, lx.handler_id));
                     }
                 }
-                // */
 
-                // new
-                let mut triggered_listens_idx = Vec::new();
-                for (idx, (l_token, l_interest, _l_handler_id)) in self.listens.iter().enumerate() {
-                    if tok == *l_token && interest_and_event(l_interest, &evt).is_some() {
-                        triggered_listens_idx.push(idx);
-                    }
+                for (_, handler_id) in &active_handlers {
+                    self.listens.retain(|lx| lx.handler_id != *handler_id);
                 }
-                triggered_listens_idx.reverse();
 
-                let mut triggered_handlers = Vec::new();
-                let mut triggered_listens_lite = Vec::new();
-                for listens_idx in triggered_listens_idx {
-                    let (m_token, m_interest, m_handler_id) = self.listens.remove(listens_idx);
-                    if let Some(handler) = self.handlers.remove(&m_handler_id) {
-                        triggered_handlers.push((handler, m_handler_id));
-                        triggered_listens_lite.push((m_token, m_interest));
-                    }
-                }
-                for (handler, _handler_id) in triggered_handlers {
+                for (handler, _handler_id) in active_handlers {
                     handler.handle(&evt, self);
                 }
+
+                self.clean_garbage();
             }
+        }
+    }
+
+    fn clean_garbage(&mut self) {
+        let before_mark = self.handlers.len() + self.listens.len();
+
+        let referenced_handler_ids: std::collections::HashSet<usize> =
+            self.listens.iter().map(|lx| lx.handler_id).collect();
+        self.handlers.retain(|handler_id, _| {
+            referenced_handler_ids.contains(handler_id)
+        });
+
+        self.listens.retain(|lx| {
+            referenced_handler_ids.contains(&lx.handler_id)
+        });
+
+        let after_mark = self.handlers.len() + self.listens.len();
+
+        if before_mark != after_mark {
+            println!("Garbage collected {} handlers", before_mark - after_mark);
         }
     }
 }
 
 
 fn interest_and_event(interest: &Interest, event: &Event) -> Option<Interest> {
-    let mut res = None;
-    let mut res_add = |i: Interest| {
-        res = match res {
-            None => Some(i),
-            Some(p) => Some(p.add(i)),
+    let mut res: Option<Interest> = None;
+    macro_rules! res_add {
+        ($i:expr) => {
+            res = res.map_or(Some($i), |r| Some(r.add($i)))
         };
-    };
-
+    }
     if event.is_readable() && interest.is_readable() {
-        res_add(Interest::READABLE);
+        res_add!(Interest::READABLE);
     }
     if event.is_writable() && interest.is_writable() {
-        res_add(Interest::WRITABLE);
+        res_add!(Interest::WRITABLE);
     }
     // if event.is_aio() && interest.is_aio() {
     //     res_add(Interest::AIO);
@@ -234,6 +200,5 @@ fn interest_and_event(interest: &Interest, event: &Event) -> Option<Interest> {
     // if event.is_lio() && interest.is_lio() {
     //     res_add(Interest::LIO);
     // }
-
     res
 }

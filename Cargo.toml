@@ -17,6 +17,8 @@ rcgen = { version = "0.14.1", features = ["pem", "x509-parser"] }
 httparse = "1.10.1"
 url = "2.4.1"
 sha2 = "0.10"
+pem = "3.0.5"
+x509-parser = "0.17.0"
 
 [[bin]]
 name = "carpenter"

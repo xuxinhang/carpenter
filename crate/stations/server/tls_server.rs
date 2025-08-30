@@ -3,19 +3,9 @@ use rustls::{ServerConnection, ServerConfig};
 use crate::bridge::{BridgeStation, BridgeResult, BridgeError, BridgeStationTransferRecord};
 use crate::certmgr::certstorage;
 use crate::common::{Hostname};
-
+use crate::helper::tls_struct::TlsClosingStage;
 
 const SINGLE_BURST_SIZE_LIMIT: usize = 512 * 1024; // = 512 KB
-
-
-#[derive(PartialEq, Debug)]
-enum TlsClosingStage {
-    Running,
-    PeerSentCloseNotify,
-    HereSentCloseNotify,
-    BothSentCloseNotify,
-    Crushed,
-}
 
 
 pub struct TlsUniversalServerStation {
@@ -23,22 +13,12 @@ pub struct TlsUniversalServerStation {
     tls_server_closed: TlsClosingStage,
 }
 
-impl TlsClosingStage {
-    fn peer_closing(&self) -> bool {
-        matches!(self, TlsClosingStage::BothSentCloseNotify | TlsClosingStage::PeerSentCloseNotify)
-    }
-    fn here_closing(&self) -> bool {
-        matches!(self, TlsClosingStage::HereSentCloseNotify | TlsClosingStage::BothSentCloseNotify)
-    }
-    fn both_closed(&self) -> bool {
-        matches!(self, TlsClosingStage::BothSentCloseNotify | TlsClosingStage::Crushed)
-    }
-}
-
 
 impl TlsUniversalServerStation {
     pub fn new(target_hostname: Hostname) -> Self {
         let host_name = target_hostname.clone();
+
+        println!("Creating TLS universal server station: {:?}", host_name);
 
         let local_tls_cert_data =
             certstorage::fetch_or_generate_tls_repack_certificate_file(&host_name).unwrap();

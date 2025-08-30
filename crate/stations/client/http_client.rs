@@ -148,16 +148,5 @@ impl BridgeStation for HttpTunnelProtocolClientStation {
         self.station_message_downward = downward;
         self.station_message_upward = upward;
     }
-
-    // fn notify_message(&mut self) {
-    //     let message_queue = &self.station_message_downward;
-    //     if message_queue.peek().is_none() {
-    //         return ();
-    //     }
-    //     let (_, msg) = message_queue.consume();
-    //     match msg {
-    //         _ => {},
-    //     }
-    // }
 }
 

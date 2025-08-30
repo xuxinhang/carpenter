@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use rustls::{ServerConnection, ClientConnection, ServerConfig, ClientConfig};
 use crate::bridge::{BridgeStation, BridgeResult, BridgeError, BridgeStationTransferRecord};
 use crate::common::{Hostname};
+use crate::helper::tls_struct::TlsClosingStage;
 
 const SINGLE_BURST_SIZE_LIMIT: usize = 512 * 1024; // = 512 KB
 
@@ -13,28 +14,6 @@ fn convert_hostname_to_rustls_server_name(h: Hostname) -> rustls::client::Server
             ServerName::IpAddress(v),
         Hostname::DnsName(v) =>
             ServerName::try_from(v.to_string().as_str()).unwrap(),
-    }
-}
-
-
-#[derive(PartialEq, Debug)]
-enum TlsClosingStage {
-    Running,
-    PeerSentCloseNotify,
-    HereSentCloseNotify,
-    BothSentCloseNotify,
-    Crushed,
-}
-
-impl TlsClosingStage {
-    fn peer_closing(&self) -> bool {
-        matches!(self, TlsClosingStage::BothSentCloseNotify | TlsClosingStage::PeerSentCloseNotify)
-    }
-    fn here_closing(&self) -> bool {
-        matches!(self, TlsClosingStage::HereSentCloseNotify | TlsClosingStage::BothSentCloseNotify)
-    }
-    fn both_closed(&self) -> bool {
-        matches!(self, TlsClosingStage::BothSentCloseNotify | TlsClosingStage::Crushed)
     }
 }
 

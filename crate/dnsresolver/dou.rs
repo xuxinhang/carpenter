@@ -52,9 +52,9 @@ impl DnsResolver for DnsDouResolver {
             sent_dns_message: dns_msg,
             // received_dns_messages: Vec
         };
-        event_loop.register(Box::new(DnsDouResolverSenderWritableHandler {
+        event_loop.collect(Box::new(DnsDouResolverSenderWritableHandler {
             profile: Rc::new(RefCell::new(prof)),
-            callback: callback,
+            callback,
         })).unwrap();
     }
 }
@@ -74,7 +74,7 @@ struct DnsDouResolverSenderWritableHandler {
 }
 
 impl EventHandler for DnsDouResolverSenderWritableHandler {
-    fn register(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         registry.register(&mut prof.socket, prof.token, Interest::WRITABLE)
     }
@@ -91,7 +91,7 @@ impl EventHandler for DnsDouResolverSenderWritableHandler {
 
             drop(borw);
 
-            event_loop.reregister(Box::new(DnsDouResolverReceiverReadableHandler {
+            event_loop.collect(Box::new(DnsDouResolverReceiverReadableHandler {
                 profile: self.profile.clone(),
                 callback: self.callback,
             })).unwrap();
@@ -106,7 +106,7 @@ struct DnsDouResolverReceiverReadableHandler {
 }
 
 impl EventHandler for DnsDouResolverReceiverReadableHandler {
-    fn reregister(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
+    fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         registry.reregister(&mut prof.socket, prof.token, Interest::READABLE)
     }
@@ -122,13 +122,10 @@ impl EventHandler for DnsDouResolverReceiverReadableHandler {
             }
             buffer.resize(size.unwrap(), 0);
 
-            let addr = match parse_dns_response_message(&buffer) {
-                Ok(maybe_addr) => maybe_addr,
-                Err(e) => {
-                    wd_log::log_error_ln!("DnsDouResolver # parse_dns_response_message error {:?}", e);
-                    None
-                }
-            };
+            let addr = parse_dns_response_message(&buffer).unwrap_or_else(|e| {
+                wd_log::log_error_ln!("DnsDouResolver # parse_dns_response_message error {:?}", e);
+                None
+            });
             self.callback.dns_resolve_ready(addr, event_loop);
         }
     }

@@ -80,7 +80,7 @@ impl GlobalConfiguration {
     pub fn get_outbound_action_by_host(&self, host: &HostAddress) -> Option<OutboundAction> {
         match host.0 {
             Hostname::DnsName(ref s) => {
-                self.outbound_matcher.get(host.1, s.to_string().as_str())
+                self.outbound_matcher.get(host.1*0, s.to_string().as_str())
             }
             _ => None,
         }

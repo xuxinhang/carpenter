@@ -1,3 +1,5 @@
+pub mod tls_struct;
+
 use std::str::FromStr;
 use httparse;
 use crate::common::{HostAddress, HostParseError};

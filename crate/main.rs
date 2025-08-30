@@ -83,7 +83,7 @@ fn main() {
     let authentication_manager = Rc::new(RefCell::new(res.unwrap()));
 
     // register server
-    let mut el = EventLoop::new(1024).unwrap();
+    let mut el = EventLoop::new().unwrap();
     let server_count = register_servers(&mut el, authentication_manager.clone());
     if server_count == 0 {
         wd_log::log_warn_ln!("No proxy server is running. Please check your configuration.");

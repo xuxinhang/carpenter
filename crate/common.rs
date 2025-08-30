@@ -3,7 +3,9 @@ use std::fs;
 use std::str::FromStr;
 use std::net::{SocketAddr, IpAddr};
 use std::convert::From;
+use std::io::Read;
 use domain::base::Dname;
+use crate::certmgr::certstorage::{pem_to_der, ROOT_CA_CERTIFICATE_PATH};
 
 #[derive(Clone, Debug)]
 pub struct HostParseError();
@@ -59,6 +61,23 @@ impl FromStr for Hostname {
 
 
 pub fn load_tls_certificate(file_path: &str) -> io::Result<Vec<rustls::Certificate>> {
+    if file_path == ROOT_CA_CERTIFICATE_PATH {
+        println!("file_path == ROOT_CA_CERTIFICATE_PATH");
+        let certname = "_certificates/root_ca/certificate.der.crt";
+        let certfile = fs::File::open(certname)?;
+        let mut file_buffer = io::BufReader::new(certfile);
+        let mut buffer= Vec::new();
+        file_buffer.read_to_end(&mut buffer);
+        return Ok(vec![rustls::Certificate(buffer)]);
+    } else {
+        let certfile = fs::File::open(file_path)?;
+        let mut file_buffer = io::BufReader::new(certfile);
+        let mut buffer= Vec::new();
+        file_buffer.read_to_end(&mut buffer);
+        let derb = pem_to_der(String::from_utf8_lossy(&buffer).into_owned().as_str());
+        return Ok(vec![rustls::Certificate(derb)]);
+    }
+
     let certname = file_path;
     let certfile = fs::File::open(certname)?;
     let certdata = rustls_pemfile::certs(&mut io::BufReader::new(certfile))?
