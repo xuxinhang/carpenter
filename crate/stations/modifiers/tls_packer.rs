@@ -41,6 +41,9 @@ pub struct TlsUnpackerStation {
 pub struct TlsRepackerStation {
     tls_client: ClientConnection,
     tls_client_closed: TlsClosingStage,
+    // use this to avoid repeatedly transferring TLS raw data with the same size
+    // ... might be heartbeat
+    tls_client_raw_data_track: (u8, u8),
 }
 
 impl TlsUnpackerStation {
@@ -97,12 +100,15 @@ impl TlsRepackerStation {
         Self {
             tls_client: remote_tls,
             tls_client_closed: TlsClosingStage::Running,
+            tls_client_raw_data_track: (255, 0),
         }
     }
 }
 
 
 impl BridgeStation for TlsUnpackerStation {
+    fn get_flag(&self) -> &'static str { "TlsUnpackerStation" }
+
     fn local_write(&mut self, mut buf: &[u8]) -> BridgeResult {
         if !self.tls_server.wants_read() && self.tls_server_closed.both_closed() {
             return Ok(BridgeStationTransferRecord::End);
@@ -192,6 +198,8 @@ impl BridgeStation for TlsUnpackerStation {
 
 
 impl BridgeStation for TlsRepackerStation {
+    fn get_flag(&self) -> &'static str { "TlsRepackerStation" }
+
     fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
         if self.tls_client_closed.here_closing() {
             return Ok(BridgeStationTransferRecord::End);
@@ -210,8 +218,18 @@ impl BridgeStation for TlsRepackerStation {
             return Ok(BridgeStationTransferRecord::Some(0));
         }
 
+        // bypass repeated data, such as heartbeat package
+        if self.tls_client_raw_data_track.1 > 10 {
+            return Ok(BridgeStationTransferRecord::Some(0));
+        }
+
         let s = self.tls_client.write_tls(&mut buf)
             .map_err(|_e| BridgeError::Protocol("Tls client: write_tls"))?;
+        if s < 256 && self.tls_client_raw_data_track.0 == (s as u8) {
+            self.tls_client_raw_data_track.1 += 1
+        } else {
+            self.tls_client_raw_data_track = (std::cmp::min(s, 256) as u8, 1)
+        }
         Ok(BridgeStationTransferRecord::Some(s))
     }
 
@@ -247,7 +265,7 @@ impl BridgeStation for TlsRepackerStation {
         if expected_plaintext_size == 0 {
             return Ok(BridgeStationTransferRecord::Some(0));
         }
-        
+
         let s = self.tls_client.reader().read(&mut buf)
             .map_err(|_e| BridgeError::Protocol("Tls Client: write_tls"))?;
         Ok(BridgeStationTransferRecord::Some(s))

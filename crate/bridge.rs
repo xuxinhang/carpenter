@@ -15,7 +15,7 @@ use crate::stations::remote::base::RemoteLinkGuide;
 pub type BridgeResult = Result<BridgeStationTransferRecord, BridgeError>;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum BridgeStationTransferRecord { Some(usize), Wait, End }
-// pub type BridgeStationTransferRecord = Option<usize>;
+
 
 impl BridgeStationTransferRecord {
     pub fn is_end(&self) -> bool {
@@ -111,6 +111,7 @@ pub enum BridgeStationDownwardMessage {
 
 
 pub trait BridgeStation {
+    fn get_flag(&self) -> &'static str { "GenericBridgeStation" }
     fn local_write(&mut self, buf: &[u8]) -> BridgeResult;
     fn local_read(&mut self, buf: &mut [u8]) -> BridgeResult;
     fn remote_write(&mut self, buf: &[u8]) -> BridgeResult;
@@ -136,6 +137,8 @@ pub trait BridgeStation {
 struct BridgeNullRemoteTerminal {}
 
 impl BridgeStation for BridgeNullRemoteTerminal {
+    fn get_flag(&self) -> &'static str { "BridgeNullRemoteTerminal" }
+
     fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
         assert_eq!(buf.len(), 0);
         Ok(BridgeStationTransferRecord::Some(0))
@@ -172,6 +175,8 @@ impl BridgeTCPStreamLocalTerminal {
 }
 
 impl BridgeStation for BridgeTCPStreamLocalTerminal {
+    fn get_flag(&self) -> &'static str { "BridgeTCPStreamLocalTerminal" }
+
     fn local_write(&mut self, _buf: &[u8]) -> BridgeResult {
         unreachable!()
     }
@@ -234,6 +239,8 @@ impl BridgeTCPStreamRemoteTerminal {
 }
 
 impl BridgeStation for BridgeTCPStreamRemoteTerminal {
+    fn get_flag(&self) -> &'static str { "BridgeTCPStreamRemoteTerminal" }
+
     fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
         let res = match self.stream.write(buf) {
             Ok(0) => {
@@ -369,13 +376,18 @@ impl BridgeChain {
         }
     }
 
-    fn flush_once(&mut self) -> Result<(usize, bool), BridgeError> {
+    fn flush_once(&mut self) -> Result<(usize, bool, String), BridgeError> {
         let mut total_size = 0;
+        let mut total_size_track: String = String::new();
         macro_rules! handle_buffer_result {
-            ($expr:expr) => {
+            ($expr:expr, $role:expr) => {
                 match ($expr)? {
                     BridgeStationTransferRecord::Some(n) => {
                         total_size += n;
+                        if n > 0 {
+                            total_size_track.push_str($role);
+                            total_size_track.push_str(" && ")
+                        }
                         BridgeStationTransferRecord::Some(n)
                     }
                     x => x,
@@ -386,7 +398,7 @@ impl BridgeChain {
         macro_rules! handle_message_result {
             ($expr:expr) => {
                 if $expr == true { // have to end flush right now
-                    return Ok((total_size, true));
+                    return Ok((total_size, true, total_size_track));
                 }
             }
         }
@@ -402,14 +414,17 @@ impl BridgeChain {
 
         // local terminal
         {
-            macro_rules! get_remote_side_buffers { () => {&mut self.buffers[0]} }
+            macro_rules! get_remote_side_buffers { () => { &mut self.buffers[0]} }
             if self.local_terminal_read_snapshot.is_some() {
                 let remote_side_buffers = get_remote_side_buffers!();
                 self.local_terminal.notify_message();
                 merge_terminal_snapshot!(
                     self.local_terminal_read_snapshot,
                     handle_buffer_result!(
-                        remote_side_buffers.1.read_from(&mut self.local_terminal, true)));
+                        remote_side_buffers.1.read_from(&mut self.local_terminal, true),
+                        &format!("local_terminal read_from {}", self.local_terminal.get_flag())
+                    )
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(BRIDGE_STATION_LOCAL_TERMINAL_STATION_ID));
             }
@@ -419,7 +434,10 @@ impl BridgeChain {
                 merge_terminal_snapshot!(
                     self.local_terminal_write_snapshot,
                     handle_buffer_result!(
-                        remote_side_buffers.0.write_into(&mut self.local_terminal, true)));
+                        remote_side_buffers.0.write_into(&mut self.local_terminal, true),
+                        &format!("local_terminal write_into {}", self.local_terminal.get_flag())
+                    )
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(BRIDGE_STATION_LOCAL_TERMINAL_STATION_ID));
             }
@@ -434,7 +452,10 @@ impl BridgeChain {
                 let current_station = get_current_station!();
                 let local_side_buffers = get_local_side_buffers!();
                 current_station.notify_message();
-                handle_buffer_result!(local_side_buffers.1.write_into(current_station, false));
+                handle_buffer_result!(
+                    local_side_buffers.1.write_into(current_station, false),
+                    &format!("middle_local write_into {}", current_station.get_flag())
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(current_station_id));
             }
@@ -442,7 +463,10 @@ impl BridgeChain {
                 let current_station = get_current_station!();
                 let local_side_buffers = get_local_side_buffers!();
                 current_station.notify_message();
-                handle_buffer_result!(local_side_buffers.0.read_from(current_station, false));
+                handle_buffer_result!(
+                    local_side_buffers.0.read_from(current_station, false),
+                    &format!("middle_local read_from {}", current_station.get_flag())
+                );
                 self.handle_upward_message_queue(current_station_id);
             }
             macro_rules! get_remote_side_buffers {() => {&mut self.buffers[j+1]};}
@@ -450,7 +474,10 @@ impl BridgeChain {
                 let current_station = get_current_station!();
                 let remote_side_buffers = get_remote_side_buffers!();
                 current_station.notify_message();
-                handle_buffer_result!(remote_side_buffers.1.read_from(current_station, true));
+                handle_buffer_result!(
+                    remote_side_buffers.1.read_from(current_station, true),
+                    &format!("middle_remote read_from {}", current_station.get_flag())
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(current_station_id));
             }
@@ -458,7 +485,10 @@ impl BridgeChain {
                 let current_station = get_current_station!();
                 let remote_side_buffers = get_remote_side_buffers!();
                 current_station.notify_message();
-                handle_buffer_result!(remote_side_buffers.0.write_into(current_station, true));
+                handle_buffer_result!(
+                    remote_side_buffers.0.write_into(current_station, true),
+                    &format!("middle_remote write_into {}", current_station.get_flag())
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(current_station_id));
             }
@@ -480,7 +510,11 @@ impl BridgeChain {
                 maybe_terminal.notify_message();
                 merge_terminal_snapshot!(
                     self.remote_terminal_write_snapshot,
-                    handle_buffer_result!(local_side_buffers.1.write_into(maybe_terminal, false)));
+                    handle_buffer_result!(
+                        local_side_buffers.1.write_into(maybe_terminal, false),
+                        &format!("remote_terminal write_into {}", maybe_terminal.get_flag())
+                    )
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(BRIDGE_STATION_REMOTE_TERMINAL_STATION_ID));
             }
@@ -490,13 +524,17 @@ impl BridgeChain {
                 maybe_terminal.notify_message();
                 merge_terminal_snapshot!(
                     self.remote_terminal_read_snapshot,
-                    handle_buffer_result!(local_side_buffers.0.read_from(maybe_terminal, false)));
+                    handle_buffer_result!(
+                        local_side_buffers.0.read_from(maybe_terminal, false),
+                        &format!("remote_terminal read_from {}", maybe_terminal.get_flag())
+                    )
+                );
                 handle_message_result!(
                     self.handle_upward_message_queue(BRIDGE_STATION_REMOTE_TERMINAL_STATION_ID));
             }
         }
 
-        Ok((total_size, false))
+        Ok((total_size, false, total_size_track))
     }
 
     fn handle_upward_message_queue(&mut self, expected_station_id: usize) -> bool {
@@ -564,16 +602,18 @@ impl BridgeChain {
         loop {
             let res = self.flush_once();
             if let Err(e) = res {
-                wd_log::log_warn_ln!("BridgeChain.do_loop // {:?}", e);
+                wd_log::log_info_ln!("[BridgeChain::do_loop] bridge-error occurred: {:?}", e);
                 return;
             }
-            let (flush_size, flush_incomplete) = res.unwrap();
-            if flush_size == 0 && flush_incomplete == false {
+            let (flush_size, _flush_incomplete, _flush_track) = res.unwrap();
+            if flush_size == 0 {
                 break;
             }
+            // if loop_count % 1000 == 0 {
         }
 
         // 2. check terminals' latest snapshot
+        /*
         let is_record_fully_operated = |s|
             match s {
                 BridgeStationTransferRecord::Some(n) if n > 0 => true,
@@ -586,11 +626,14 @@ impl BridgeChain {
             || is_record_fully_operated(self.remote_terminal_write_snapshot) {
             unreachable!();
         }
+        */
     }
 }
 
 
 impl EventHandler for BridgeChain {
+    fn get_tag(&self) -> &'static str { "BridgeChain" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         self.local_terminal_next_interest =
             match (self.local_terminal_read_snapshot, self.local_terminal_write_snapshot)  {
@@ -640,7 +683,6 @@ impl EventHandler for BridgeChain {
             let direct_hostname = match self.remote_link_guide.as_ref().unwrap().stream_address.0 {
                 Hostname::IpAddress(ref addr) => Hostname::IpAddress(addr.clone()),
                 Hostname::DnsName(ref domain) => Hostname::DnsName(domain.clone()),
-                // TODO: direct ip access :: return ip.clone()
             };
 
             match &direct_hostname {
@@ -686,6 +728,8 @@ impl DnsResolveCallback for DnsQueryOnLoadHandler {
             report_failure!(false);
         }
 
+        wd_log::log_debug_ln!("[DnsResolveCallback] resolved IP address: {:?}", ip);
+
         let stream = TcpStream::connect(SocketAddr::new(
             ip.unwrap(),
             (&hanged_bridge).remote_link_guide.as_ref().unwrap().stream_address.1)
@@ -711,6 +755,8 @@ struct RemoteTcpStreamOnConnectedHandler {
 }
 
 impl EventHandler for RemoteTcpStreamOnConnectedHandler {
+    fn get_tag(&self) -> &'static str { "RemoteTcpStreamOnConnectedHandler" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         registry.register(&mut self.remote_stream, self.remote_stream_token, Interest::WRITABLE)
     }
@@ -800,7 +846,7 @@ impl BridgeBuffer {
             return Ok(BridgeStationTransferRecord::Some(0));
         }
 
-        let mut data = vec![0; self.wants_read()]; // TODO: faster?
+        let mut data = vec![0; self.wants_read()];
         let res = if !side {
             reader.local_read(&mut data)
         } else {

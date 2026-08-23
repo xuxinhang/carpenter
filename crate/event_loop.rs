@@ -3,6 +3,7 @@ use std::io;
 use std::collections::HashMap;
 use mio::{Events, Interest, Poll, Token};
 use mio::event::{Event, Source};
+use std::time::SystemTime;
 
 
 pub struct EventTokenPool {
@@ -19,8 +20,7 @@ impl EventTokenPool {
 
 
 pub trait EventHandler {
-    fn register(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
-    fn reregister(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
+    fn get_tag(&self) -> &'static str { "GenericEventHandle" }
     fn collect(&mut self, _registry: &mut EventRegistryIntf) -> io::Result<()> { Ok(()) }
     fn handle(self: Box<Self>, event: &Event, event_loop: &mut EventLoop);
 }
@@ -111,14 +111,6 @@ impl EventLoop {
         Ok(())
     }
 
-    // pub fn deregister(&mut self, hdlr: Box<dyn EventHandler>) -> io::Result<Box<dyn EventHandler>> {
-    //     let mut hdlr_box = hdlr;
-    //     let (source, tok, _interest) = hdlr_box.target().get();
-    //     self.poll.registry().deregister(source)?;
-    //     let rmd = self.handlers.remove(&tok).unwrap();
-    //     Ok(rmd)
-    // }
-
     pub fn start_loop(&mut self) -> io::Result<()> {
         const EVENTS_CAPACITY: usize = 64;
         
@@ -151,7 +143,14 @@ impl EventLoop {
                 }
 
                 for (handler, _handler_id) in active_handlers {
+                    let before_time = SystemTime::now();
+                    let tag_str = handler.get_tag();
                     handler.handle(&evt, self);
+                    let after_time = SystemTime::now();
+                    let duration_sec = after_time.duration_since(before_time).unwrap().as_secs();
+                    if duration_sec > 2 {
+                        wd_log::log_error_ln!("[EventLoop] handler {} spends too long time {} seconds", duration_sec, tag_str);
+                    }
                 }
 
                 self.clean_garbage();
@@ -160,8 +159,6 @@ impl EventLoop {
     }
 
     fn clean_garbage(&mut self) {
-        let before_mark = self.handlers.len() + self.listens.len();
-
         let referenced_handler_ids: std::collections::HashSet<usize> =
             self.listens.iter().map(|lx| lx.handler_id).collect();
         self.handlers.retain(|handler_id, _| {
@@ -172,11 +169,7 @@ impl EventLoop {
             referenced_handler_ids.contains(&lx.handler_id)
         });
 
-        let after_mark = self.handlers.len() + self.listens.len();
-
-        if before_mark != after_mark {
-            println!("Garbage collected {} handlers", before_mark - after_mark);
-        }
+        let _after_mark = self.handlers.len() + self.listens.len();
     }
 }
 
@@ -194,11 +187,5 @@ fn interest_and_event(interest: &Interest, event: &Event) -> Option<Interest> {
     if event.is_writable() && interest.is_writable() {
         res_add!(Interest::WRITABLE);
     }
-    // if event.is_aio() && interest.is_aio() {
-    //     res_add(Interest::AIO);
-    // }
-    // if event.is_lio() && interest.is_lio() {
-    //     res_add(Interest::LIO);
-    // }
     res
 }

@@ -46,6 +46,8 @@ impl TlsUniversalServerStation {
 
 
 impl BridgeStation for TlsUniversalServerStation {
+    fn get_flag(&self) -> &'static str { "TlsUniversalServerStation" }
+
     fn local_write(&mut self, mut buf: &[u8]) -> BridgeResult {
         if !self.tls_server.wants_read() && self.tls_server_closed.both_closed() {
             return Ok(BridgeStationTransferRecord::End);

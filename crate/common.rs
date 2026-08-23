@@ -67,24 +67,24 @@ pub fn load_tls_certificate(file_path: &str) -> io::Result<Vec<rustls::Certifica
         let certfile = fs::File::open(certname)?;
         let mut file_buffer = io::BufReader::new(certfile);
         let mut buffer= Vec::new();
-        file_buffer.read_to_end(&mut buffer);
+        file_buffer.read_to_end(&mut buffer)?;
         return Ok(vec![rustls::Certificate(buffer)]);
     } else {
         let certfile = fs::File::open(file_path)?;
         let mut file_buffer = io::BufReader::new(certfile);
         let mut buffer= Vec::new();
-        file_buffer.read_to_end(&mut buffer);
+        file_buffer.read_to_end(&mut buffer)?;
         let derb = pem_to_der(String::from_utf8_lossy(&buffer).into_owned().as_str());
         return Ok(vec![rustls::Certificate(derb)]);
     }
 
-    let certname = file_path;
-    let certfile = fs::File::open(certname)?;
-    let certdata = rustls_pemfile::certs(&mut io::BufReader::new(certfile))?
-        .iter()
-        .map(|v| rustls::Certificate(v.clone()))
-        .collect();
-    Ok(certdata)
+    // let certname = file_path;
+    // let certfile = fs::File::open(certname)?;
+    // let certdata = rustls_pemfile::certs(&mut io::BufReader::new(certfile))?
+    //     .iter()
+    //     .map(|v| rustls::Certificate(v.clone()))
+    //     .collect();
+    // Ok(certdata)
 }
 
 

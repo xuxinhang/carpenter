@@ -83,15 +83,16 @@ impl DnsResolver for DnsDotResolver {
 
         let dns_msg = build_dns_query_message(name);
         if dns_msg.is_err() {
-            wd_log::log_error_ln!("DnsDotResolver # Fail to build DNS message {:?}", dns_msg.unwrap_err());
+            wd_log::log_warn_ln!(
+                "[DnsDotResolver] error occurred when building DNS message: {:?}",
+                dns_msg.unwrap_err()
+            );
             return;
         }
         let mut dns_msg = dns_msg.unwrap();
         let msg_len = dns_msg.len() as u16;
         dns_msg.insert(0, (msg_len & 0xff) as u8); // Extra bytes via DNS over TCP
         dns_msg.insert(0, (msg_len >> 8) as u8);
-
-        println!("dns_msg {:?}", dns_msg.len());
         profile.pending_dns_messages.push(dns_msg);
 
 
@@ -120,6 +121,8 @@ struct DnsDotResolveRemoteWritableHandler {
 }
 
 impl EventHandler for DnsDotResolveRemoteWritableHandler {
+    fn get_tag(&self) -> &'static str { "DnsDotResolveRemoteWritableHandler" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         if self.registered_once {
@@ -158,6 +161,8 @@ struct DnsDotResolveRemoteReadableHandler {
 }
 
 impl EventHandler for DnsDotResolveRemoteReadableHandler {
+    fn get_tag(&self) -> &'static str { "DnsDotResolveRemoteReadableHandler" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         registry.reregister(&mut prof.conn, prof.token, Interest::READABLE)
@@ -243,12 +248,11 @@ impl EventHandler for DnsDotResolveRemoteReadableHandler {
                                 }
                             }
                             Err(e) => {
-                                println!("DnsDotResolver # profile.tls.write_all error {:?}", e);
+                                wd_log::log_warn_ln!("[DnsDotResolver] profile.tls.write_all error: {:?}", e);
                                 return;
                             }
                         }
                     }
-                    println!("prof.pending_dns_messages {:?}", prof.pending_dns_messages.len())
                 }
             }
         }

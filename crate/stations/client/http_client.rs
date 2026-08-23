@@ -39,6 +39,8 @@ impl HttpTunnelProtocolClientStation {
 }
 
 impl BridgeStation for HttpTunnelProtocolClientStation {
+    fn get_flag(&self) -> &'static str { "HttpTunnelProtocolClientStation" }
+
     fn local_write(&mut self, _buf: &[u8]) -> BridgeResult {
         match self.status {
             HttpTunnelProtocolClientStatus::Running => unreachable!(),

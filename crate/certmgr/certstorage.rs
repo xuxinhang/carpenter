@@ -3,7 +3,6 @@ use std::io::{Read, Write};
 use std::path::Path;
 use rcgen::{BasicConstraints, DistinguishedName, KeyPair, SerialNumber};
 use rcgen::IsCa::Ca;
-use rustls::internal::msgs::enums::ExtensionType::SignatureAlgorithms;
 use crate::common::Hostname;
 
 

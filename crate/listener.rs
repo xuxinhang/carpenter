@@ -48,6 +48,8 @@ struct LocalStreamIncomingGenericServer {
 }
 
 impl EventHandler for LocalStreamIncomingGenericServer {
+    fn get_tag(&self) -> &'static str { "LocalStreamIncomingGenericServer" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         if self.listener_registered == 0 {
             registry.register(&mut self.listener, self.listener_token, Interest::READABLE)?;

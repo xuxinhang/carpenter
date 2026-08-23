@@ -74,6 +74,8 @@ struct DnsDouResolverSenderWritableHandler {
 }
 
 impl EventHandler for DnsDouResolverSenderWritableHandler {
+    fn get_tag(&self) -> &'static str { "DnsDouResolverSenderWritableHandler" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         registry.register(&mut prof.socket, prof.token, Interest::WRITABLE)
@@ -106,6 +108,8 @@ struct DnsDouResolverReceiverReadableHandler {
 }
 
 impl EventHandler for DnsDouResolverReceiverReadableHandler {
+    fn get_tag(&self) -> &'static str { "DnsDouResolverReceiverReadableHandler" }
+
     fn collect(&mut self, registry: &mut EventRegistryIntf) -> io::Result<()> {
         let prof = &mut *self.profile.borrow_mut();
         registry.reregister(&mut prof.socket, prof.token, Interest::READABLE)

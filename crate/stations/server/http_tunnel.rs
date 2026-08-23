@@ -50,6 +50,8 @@ impl HTTPTunnelProtocolStation {
 }
 
 impl BridgeStation for HTTPTunnelProtocolStation {
+    fn get_flag(&self) -> &'static str { "HTTPTunnelProtocolStation" }
+
     fn local_write(&mut self, buf: &[u8]) -> BridgeResult {
         match self.status {
             HTTPTunnelStatus::WaitingForLocalMessage => {

@@ -162,10 +162,7 @@ impl<P: Clone> HostMatchTree<P> {
 
     pub fn get(&self, port: u16, hostname: &str) -> Option<P> {
         match self.ports.get(&port) {
-            None => {
-                println!("No port {} in HostMatchTree, {:?}", port, self.ports.keys());
-                return None;
-            },
+            None => None,
             Some(t) => {
                 let mut search_pattern = hostname.chars().rev().collect::<String>();
                 let mut final_profile = None;
@@ -188,8 +185,8 @@ impl<P: Clone> HostMatchTree<P> {
                     }
                 }
 
-                return final_profile;
+                final_profile
             }
-        };
+        }
     }
 }

@@ -1,8 +1,5 @@
 *:443 +direct
 
-sina.cn:443   +sni _
-*.sina.cn:443 +sni *
-
 ..zhihu.com:443 +sni *
 
 wikipedia.org:443  +sni _
@@ -18,40 +15,6 @@ github.com:443  +sni _
 ..steampowered.com:443 +sni _
 ..steamcommunity.com:443 +sni _
 
-..live.com:443  +sni _
-
-..imgur.com:443  +sni _
-
-..archive.org:443 +sni _
+onedrive.live.com:443  +sni officeapps.live.com
 
 ..startpage.com:443 +sni _
-
-
-..apkpure.net:443 +sni _
-..apk4fun.com:443 +sni _
-..apkmirror.com:443 +sni _
-..uptodown.com:443 +sni _
-
-..duckduckgo.com +sni _
-
-..huggingface.co +sni _
-
-
-
-# www.pixiv.net  +sni www.pixiv.com
-# www.instagram.com  +sni graph.cdninstagram.com
-# github*s3.amazonaws.com  +sni s3-1-w.amazonaws.com
-# facebook.com  +sni _
-# facebook.net  +sni _
-# *.fbcdn.net  +sni _
-# *.fbsbx.com  +sni _
-# *.bbc.com  +sni _
-# *.bbc.co.uk  +sni _
-# *.bbci.co.uk  +sni _
-# *.imgur.com  +sni _
-# *.tgchannels.org  +sni _
-# tumblr.com  +sni _
-# travis-ci.org  +sni _
-# cn.nytimes.com = same@d1f1eryiqyjs0r.cloudfront.net
-# .nytimes.com = *.cloudfront.net
-

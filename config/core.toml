@@ -39,7 +39,7 @@ load-local-host-file = true
 
 [dns-server]
 normal = "udp://119.29.29.29"
-secure = "tls://101.102.103.104"
+secure = "tls://130.59.31.251"
 
 # NextDNS 217.146.22.163
 # SWITCH Public DNS 130.59.31.251
