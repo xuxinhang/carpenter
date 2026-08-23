@@ -1,9 +1,11 @@
 [env]
 openssl_path = "E:\\Program Files\\Git\\usr\\bin\\openssl.exe"
 
+
 [authentication]
 verifier = "free"
 scheme = "basic,digest-sha2-256,digest-md5"
+
 
 [inbound.normal]
 enable = true
@@ -11,21 +13,13 @@ listen = "http://0.0.0.0:7890"
 
 [inbound.secure]
 enable = true
-listen = "https://0.0.0.0:7899"
-hostname = "127.0.0.1"
+listen = "https://0.0.0.0:7891"
+hostname = "localhost"
 
-
-[outbound.fanq]
-enable = true
-origin = "http://127.0.0.1:10809"
 
 [outbound.tor]
 enable = true
 origin = "http://127.0.0.1:8118"
-
-[outbound.loop]
-enable = true
-origin = "https://localhost:7898"
 
 
 [log]

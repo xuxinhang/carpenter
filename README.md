@@ -3,18 +3,15 @@
 <small>学点木匠活</small>
 
 这是一个 HTTP / HTTP over TLS 代理服务器，支持：
-- 提供 HTTP 代理和 HTTP over TLS 代理，并兼容 HTTP Forward
-- 将请求的特定域重定向到指定的IP地址或经 DNS over TLS 或 DNS over UDP 查询得到的地址
-- 对特定域抹除或修改TLS SNI字段
-- 为不同的域指定不同的出站代理服务器
 
-- 支持 DNS over TLS 实现加密的DNS查询，传统DNS （DNS over UDP） 方式也同样支持。也可以直接为域名指定IP地址。
-- 入站支持 HTTP 代理和 HTTP over TLS 代理。出站可以不经代理协议直接发送，也支持转发至外部 HTTP 代理或 HTTP over TLS 代理服务器。
-- 可改写或移除 TLS 包的 SNI 字段。
+- 支持 DNS over TLS 实现加密的DNS查询，也支持传统 DNS over UDP 查询。直接为域名指定 IP 地址亦可。
+- 入站支持 HTTP 代理和 HTTP over TLS 代理。
+- 出站可以不经代理协议直接发送，也支持转发至外部 HTTP 代理 <!-- 或 HTTP over TLS 代理服务器。 -->
+- 可改写或移除指定域名下 TLS 包的 SNI 字段。
 - 为不同的域指定不同的SNI改写、DNS查询服务器或出站方式。
-- 纯异步实现网络数据传输。
+- 纯异步实现高性能网络数据传输。
 
-It's a HTTP / HTTP over TLS proxy server, which supports:
+It's an HTTP / HTTP over TLS proxy server, which supports:
 - HTTP proxy and HTTP over TLS proxy
 - Redirect the request to specific domains to the given IP address or address queried from DNS over TLS or DNS over UDP server.
 - Remove or modify the TLS SNI field for specific domains.
@@ -23,12 +20,12 @@ It's a HTTP / HTTP over TLS proxy server, which supports:
 
 ## Start
 
-1. Equip your mechine with Rust toolchain.
+1. Equip your machine with Rust toolchain.
 2. Check the config file `config/core.toml`. Especially make sure the `openssl_path` field has pointed to a valid OpenSSL executable.
 3. Run `cargo run --release`.
 4. Set your application or OS to use this HTTP proxy.
 
-## Configuration
+## Configuration Example
 
 ### **`core.toml`**
 
@@ -39,18 +36,18 @@ openssl_path = "openssl"  # The path to OpenSSL binary (ensure added to PATH if 
 
 [inbound.normal]                 # Start a proxy server named "normal"
 enable = true                    #   enable
-listen = "http://0.0.0.0:7890"   #   it's a HTTP proxy server with listen address and port
+listen = "http://0.0.0.0:7890"   #   it's an HTTP proxy server with listen address and port
                                  #   ... only HTTP(http) or HTTP over TLS(https) protocol supported
 
 [inbound.secure]                 # Start a proxy server named "normal"
 enable = true                    #   enable
-listen = "https://0.0.0.0:7899"  #   it's a HTTP over TLS proxy server with listen address and port
-hostname = "localhost"           #   TLS certification require hostname
+listen = "https://0.0.0.0:7899"  #   it's an HTTP over TLS proxy server with listen address and port
+hostname = "localhost"           #   TLS certification requires hostname
 
 
-[outbound.fanq]                    # An outbound proxy destination named "fanq"
+[outbound.tor]                     # An outbound proxy destination named "tor"
 enable = true                      #
-origin = "https://127.0.0.1:7898"  #   proxy server protocol (only http/https) and address
+origin = "http://127.0.0.1:8118"   #   proxy server protocol (only http) and address
 
 
 [log]
@@ -74,8 +71,8 @@ Format: One rule pre line.
 Hostname supports hostname matcher rule, see below.
 
 Supported querier actions and options:
-- `+dns secure` Query the current hostname via the given DNS server with name "secure". The DNS server name is assigned in `core.toml`.
-- `+to target`  Redirect to the given target (specific hostname or IP address), then act further query if needed.
+- `+dns secure` Query the current hostname via the given DNS server with name `secure`. The DNS server name is assigned in `core.toml`.
+- `+to target`  Redirect to the given target (specific hostname or IP address), then do further querying if needed.
 
 Example:
 ```
@@ -93,10 +90,10 @@ Format: One rule pre line.
 
 Supported transformer and options:
 - `+direct` Do not modify tunnel data.
-- `+sni` Modify or remove TLS SNI data.
-  - modify SNI: `+sni hello.com`
+- `+sni` Modify or remove TLS SNI fields.
+  - assign another SNI: `+sni hello.com`
   - remove SNI: `+sni _`
-  - use orginal SNI: `+sni *`
+  - use original SNI: `+sni *`
 
 Example:
 ```
@@ -112,26 +109,25 @@ Format: One rule pre line.
 
 Supported outbound proxy action:
 - `+direct` connect directly, no more proxy
-- `+server fanq` connect via the given proxy server named "fanq"
+- `+server tor` connect via the given proxy server named "tor"
 
 Example:
 ```
 *:0 +direct
 
-*.baidu.com:0 +server fanq
+*.baidu.com:0 +server tor
 ```
 
-### Matcher file rules
+### domain matching
 
 Hostname:
-- `wikipedia.org` match exactly hostname `wikipedia.org` but no sub-domain
-- `*.wikipedia.org` match sub-domains of `wikipedia.org`, such as `upload.wikipedia.org`, but excludes `wikipedia.org` itself.
-- `..wikipedia.org` match this domain itself and its sub-domains.
+- `wikipedia.org` match exactly hostname `wikipedia.org` but no subdomain
+- `*.wikipedia.org` match subdomains of `wikipedia.org`, such as `upload.wikipedia.org`, but excludes `wikipedia.org` itself.
+- `..wikipedia.org` match this domain itself and its subdomains.
 
 Port:
 - `0`: any ports.
-- other number: the corresponding port number.
+- non-zero number: assign as the port number.
 
 Comments:
-- Any contents following hash symbol `#` is viewed as comments.
-
+- Any content prefixed by hash symbol `#` is treated as comments.
